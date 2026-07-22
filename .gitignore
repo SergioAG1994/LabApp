@@ -1,0 +1,25 @@
+# Dependencias y archivos generados (en cualquier app del monorepo)
+**/node_modules/
+**/.next/
+**/out/
+**/coverage/
+**/*.tsbuildinfo
+
+# Variables de entorno y credenciales
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+
+# Archivos del sistema y herramientas locales
+.DS_Store
+Thumbs.db
+.vercel/
+.agents/
+.codex/
+
+# Registros de herramientas
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

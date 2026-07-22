@@ -1,0 +1,88 @@
+
+Acidez				mg/L-CaCO3
+Al				mg/L
+Alcalinidad			mg CaCO3/L
+Carbonatos			mg CaCO3/L
+Bicarbonatos			mg CaCO3/L
+Ca				mg/L
+Cu				mg/L
+Ba				mg/L
+As				mg/L
+Cd				mg/L
+CE 				µS/cm
+CN				µg/L
+Cloro residual			mg/L
+Cloruros			mg/L
+Col fec MG			NMP/100mL
+Col fec (1)			NMP/100mL
+Col fec (2)			NMP/100mL
+Col fec (3)			NMP/100mL
+Col fec (4)			NMP/100mL
+Col fec (5)			NMP/100mL
+Col fec (6)			NMP/100mL
+Col Tot MG			NMP/100mL
+Col Tot (1)			NMP/100mL
+Col Tot (2)			NMP/100mL
+Col Tot (3)			NMP/100mL
+Col Tot (4)			NMP/100mL
+Col Tot (5)			NMP/100mL
+Col Tot (6)			NMP/100mL
+Color				U Pt-Co
+Cr				mg/L
+Cr VI				mg Cr6/L
+DBO5				mg/L
+DBO5 Soluble			mg/L
+DQO				mgO2/L
+DQO Soluble			mg/L
+Mg				mg/L
+Dureza T			mg/L-CaCO3
+Dureza Ca			mg/L-CaCO3
+Dureza Mg			mg/L-CaCO3
+E. coli MG			NMP/100mL
+E. coli (1)			NMP/100mL
+E. coli (2)			NMP/100mL
+E. coli (3)			NMP/100mL
+E. coli (4)			NMP/100mL
+E. coli (5)			NMP/100mL
+E. coli (6)			NMP/100mL
+Sn				mg/L
+Sr				mg/L
+Fenoles 			mg/L
+Fe 				mg/L
+F				mg/L
+GyA ponderado			mg/L
+GyA (1)				mg/L
+GyA (2)				mg/L
+GyA (3)				mg/L
+GyA (4)				mg/L
+GyA (5)				mg/L
+GyA (6)				mg/L
+HH				H/L
+Mn				mg/L
+MF				Sin unidades
+Hg				mg/L
+Ni				mg/L
+NO3				mg N-NO3/L
+NO2				mg/L de N-O2
+N-NH3				mg/L-N
+NORG				mg/L-N
+N-TKN				mg/L
+N Total				mg/L-N
+pH 				U. de pH 
+pH muestreo			U. de pH 
+Pb				mg/L
+PT				mg P/L
+S. Sed				ml/L
+SAAM				mg/L- SAL
+Si				mg/L
+Mg				mg/L
+Na				mg/L
+SST				mg/L
+SSV				mg/L
+ST				mg/L
+SDT				mg/L
+SO4				mg/L SO4
+Temperatura			° C
+Turbidez			UNT
+SDT				mg/L
+Zn				mg/L
