@@ -68,21 +68,6 @@ create table public.samples (
   unique (order_id, sample_code)
 );
 
-create table public.sample_parameters (
-  id uuid primary key default gen_random_uuid(),
-  sample_id uuid not null references public.samples(id) on delete cascade,
-  parameter_id uuid not null references public.parameters(id),
-  assigned_analyst_id uuid references public.profiles(id),
-  numeric_result numeric,
-  text_result text,
-  qualifier text check (qualifier in ('less_than')),
-  captured_at timestamptz,
-  captured_by uuid references public.profiles(id),
-  note text,
-  unique (sample_id, parameter_id),
-  check ((numeric_result is not null)::int + (text_result is not null)::int <= 1)
-);
-
 create table public.reports (
   id uuid primary key default gen_random_uuid(),
   order_id uuid not null references public.analysis_orders(id),
@@ -124,7 +109,6 @@ alter table public.analysis_packages enable row level security;
 alter table public.package_parameters enable row level security;
 alter table public.analysis_orders enable row level security;
 alter table public.samples enable row level security;
-alter table public.sample_parameters enable row level security;
 alter table public.reports enable row level security;
 alter table public.audit_events enable row level security;
 
@@ -134,12 +118,9 @@ create policy "authenticated can read packages" on public.analysis_packages for 
 create policy "authenticated can read package parameters" on public.package_parameters for select to authenticated using (true);
 create policy "authenticated can read orders" on public.analysis_orders for select to authenticated using (true);
 create policy "authenticated can read samples" on public.samples for select to authenticated using (true);
-create policy "authenticated can read sample parameters" on public.sample_parameters for select to authenticated using (true);
 create policy "authenticated can read reports" on public.reports for select to authenticated using (true);
 create policy "users read their profile" on public.profiles for select to authenticated using (id = auth.uid() or public.current_role() = 'administrador');
 create policy "admins update profiles" on public.profiles for update to authenticated using (public.current_role() = 'administrador');
 create policy "reception creates orders" on public.analysis_orders for insert to authenticated with check (public.current_role() in ('administrador', 'recepcion'));
 create policy "reception updates orders" on public.analysis_orders for update to authenticated using (public.current_role() in ('administrador', 'recepcion'));
 create policy "reception manages samples" on public.samples for all to authenticated using (public.current_role() in ('administrador', 'recepcion')) with check (public.current_role() in ('administrador', 'recepcion'));
-create policy "analysts update assigned results" on public.sample_parameters for update to authenticated using (assigned_analyst_id = auth.uid() or public.current_role() in ('administrador', 'recepcion'));
-create policy "reception creates results" on public.sample_parameters for insert to authenticated with check (public.current_role() in ('administrador', 'recepcion'));

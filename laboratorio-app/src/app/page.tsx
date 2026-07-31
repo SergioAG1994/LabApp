@@ -195,9 +195,9 @@ export default function Home() {
         return;
     } setClient(""); setSamplingNumber(""); setSampleNumber(""); setSampler(""); setQuotation(""); setView("entries"); await loadEntries(); }
     async function openSample(entry: Entry) { setSelected(entry); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
-        return; const { data } = await supabase.from("analysis_order_rows").select("id, label, unit, row_type, aggregation, uncertainty, result_value, analyst_reference, result_date, analyst_name, released_by").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []) as OrderRow[]); }
+        return; const { data } = await supabase.from("worksheet_results").select("id, label, unit, row_type, aggregation, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []).map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]); }
     async function generateAnalysisOrder() { if (!selected?.sampleId)
-        return; setGeneratingOrder(true); const result = await supabase.rpc("create_analysis_order_rows_from_package", { p_sample_id: selected.sampleId }); setGeneratingOrder(false); if (result.error) {
+        return; setGeneratingOrder(true); const result = await supabase.rpc("create_worksheet_for_sample", { p_sample_id: selected.sampleId }); setGeneratingOrder(false); if (result.error) {
         window.alert(`No se pudo generar la orden: ${result.error.message}`);
         return;
     } await loadEntries(); await openSample({ ...selected, analysisOrderCreatedAt: new Date().toISOString() }); }
@@ -205,7 +205,7 @@ export default function Home() {
     function syncHorizontalScroll(source: "table" | "bottom", scrollLeft: number) { const target = source === "table" ? orderBottomScrollRef.current : orderTableRef.current; if (target && Math.abs(target.scrollLeft - scrollLeft) > 1)
         target.scrollLeft = scrollLeft; }
     async function saveAnalysisOrder() { if (!selected)
-        return; setSavingOrder(true); const dateResult = await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const results = await Promise.all(orderRows.map((row) => supabase.from("analysis_order_rows").update({ uncertainty: row.uncertainty === "" ? null : row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, result_date: row.result_date || null, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); setSavingOrder(false); const error = dateResult.error || results.find((result) => result.error)?.error; if (error) {
+        return; setSavingOrder(true); const dateResult = await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const results = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty === "" ? null : row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date || null, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); setSavingOrder(false); const error = dateResult.error || results.find((result) => result.error)?.error; if (error) {
         window.alert(`No se pudo guardar la orden: ${error.message}`);
         return;
     } await loadEntries(); setSelected({ ...selected, sampledAt: sampledInput || null }); if (worksheetComplete) {
