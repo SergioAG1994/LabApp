@@ -22,6 +22,7 @@ create table public.clients (
 create table public.parameters (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
+  par_form text,
   unit text,
   method_reference text,
   decimal_places smallint not null default 2 check (decimal_places between 0 and 8),
