@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { MultiSampleOrderForm } from "./MultiSampleOrderForm";
 type Entry = {
     id: string;
     op: string;
@@ -19,6 +20,13 @@ type Entry = {
     sampledAt: string | null;
     issuedAt: string | null;
     isCancelled: boolean;
+};
+type OrderGroup = {
+    id: string;
+    representative: Entry;
+    samples: Entry[];
+    analysis: string;
+    sampleRange: string;
 };
 type OrderRow = {
     id: string;
@@ -41,13 +49,10 @@ type ClientRecord = {
     phone: string | null;
 };
 const dash = "—";
-const today = () => new Date().toISOString().slice(0, 10);
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value.slice(0, 10)}T12:00:00`)) : dash;
-function dueDate(received: string) { const date = new Date(`${received}T12:00:00`); let count = 0; while (count < 8) {
-    date.setDate(date.getDate() + 1);
-    if (date.getDay() !== 0 && date.getDay() !== 6)
-        count += 1;
-} return date.toISOString().slice(0, 10); }
+function sampleConsecutive(sampleNumber: string) {
+    return sampleNumber.match(/-(\d{4})$/)?.[1] || null;
+}
 export default function Home() {
     const [session, setSession] = useState<Session | null>(null);
     const [authReady, setAuthReady] = useState(false);
@@ -62,14 +67,7 @@ export default function Home() {
     const [query, setQuery] = useState("");
     const [showCancelled, setShowCancelled] = useState(false);
     const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
-    const [client, setClient] = useState("");
-    const [samplingNumber, setSamplingNumber] = useState("");
-    const [sampleNumber, setSampleNumber] = useState("");
-    const [analysis, setAnalysis] = useState("NOM-001-2021-24H");
-    const [receivedAt, setReceivedAt] = useState(today());
-    const [sampler, setSampler] = useState("");
-    const [quotation, setQuotation] = useState("");
-    const [creating, setCreating] = useState(false);
+    const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
     const [selected, setSelected] = useState<Entry | null>(null);
     const [orderRows, setOrderRows] = useState<OrderRow[]>([]);
     const [sampledInput, setSampledInput] = useState("");
@@ -93,7 +91,7 @@ export default function Home() {
     const [clientDirectory, setClientDirectory] = useState<ClientRecord[]>([]);
     const [clientDirectoryVisible, setClientDirectoryVisible] = useState(false);
     async function loadEntries() {
-        const { data, error } = await supabase.from("analysis_orders").select("id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_packages(code, name))").order("created_at", { ascending: false });
+        const { data, error } = await supabase.from("analysis_orders").select("id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_label, analysis_packages(code, name))").order("created_at", { ascending: false });
         if (error || !data)
             return;
         setEntries(data.flatMap((item) => {
@@ -105,7 +103,7 @@ export default function Home() {
                     code?: string;
                     name?: string;
                 } | null;
-                return { id: item.id, op: item.op_number, client: clientData?.name || dash, samplingNumber: sample.sampling_number || dash, sampler: item.sampler_name || dash, quotation: item.quotation_number || dash, received: formatDate(item.received_at), due: formatDate(item.due_date), reportNumber: item.report_number || "", analysis: packageData?.name || packageData?.code || dash, sampleNumber: sample.sample_code, sampleId: sample.id, analysisOrderCreatedAt: sample.analysis_order_created_at || null, sampledAt: item.sampled_at || null, issuedAt: item.issued_at || null, isCancelled: item.status === "cancelada" };
+                return { id: item.id, op: item.op_number, client: clientData?.name || dash, samplingNumber: sample.sampling_number || dash, sampler: item.sampler_name || dash, quotation: item.quotation_number || dash, received: formatDate(item.received_at), due: formatDate(item.due_date), reportNumber: item.report_number || "", analysis: sample.analysis_label || packageData?.name || packageData?.code || dash, sampleNumber: sample.sample_code, sampleId: sample.id, analysisOrderCreatedAt: sample.analysis_order_created_at || null, sampledAt: item.sampled_at || null, issuedAt: item.issued_at || null, isCancelled: item.status === "cancelada" };
             });
         }));
     }
@@ -151,15 +149,6 @@ export default function Home() {
         return () => window.clearTimeout(timer);
     }, [session, view]);
     useEffect(() => {
-        if (!session || view !== "new") return;
-        void supabase.from("analysis_packages").select("code, name").eq("active", true).order("name").then(({ data }) => {
-            const select = document.querySelector(".order-form select") as HTMLSelectElement | null;
-            if (!select || !data) return;
-            select.querySelectorAll("option[data-excel-template]").forEach((option) => option.remove());
-            data.filter((item) => item.code.startsWith("XLS-")).forEach((item) => { const option = document.createElement("option"); option.value = item.code; option.textContent = item.name; option.dataset.excelTemplate = "true"; select.append(option); });
-        });
-    }, [session, view, analysis]);
-    useEffect(() => {
         if (view !== "clients") return;
         const form = document.querySelector(".order-form");
         if (!form) return;
@@ -192,13 +181,28 @@ export default function Home() {
         const button = document.querySelector(".topbar > .button.primary") as HTMLButtonElement | null;
         if (button) button.textContent = "Nueva OP";
     }, [view, showCancelled]);
-    const filteredEntries = useMemo(() => entries.filter((entry) => (showCancelled ? entry.isCancelled : !entry.isCancelled) && `${entry.op} ${entry.client} ${entry.sampleNumber} ${entry.samplingNumber} ${entry.analysis}`.toLowerCase().includes(query.toLowerCase())), [entries, query, showCancelled]);
+    const visibleOrderGroups = useMemo(() => {
+        const groups = new Map<string, Entry[]>();
+        entries.filter((entry) => showCancelled ? entry.isCancelled : !entry.isCancelled).forEach((entry) => {
+            groups.set(entry.id, [...(groups.get(entry.id) || []), entry]);
+        });
+        return [...groups.entries()].map(([id, orderSamples]): OrderGroup => {
+            const samples = [...orderSamples].sort((a, b) => {
+                const aConsecutive = sampleConsecutive(a.sampleNumber);
+                const bConsecutive = sampleConsecutive(b.sampleNumber);
+                if (aConsecutive && bConsecutive) return Number(aConsecutive) - Number(bConsecutive);
+                return a.sampleNumber.localeCompare(b.sampleNumber);
+            });
+            const analyses = [...new Set(samples.map((sample) => sample.analysis))];
+            const consecutives = samples.map((sample) => sampleConsecutive(sample.sampleNumber));
+            const sampleRange = consecutives.every(Boolean)
+                ? consecutives.length === 1 ? consecutives[0]! : `${consecutives[0]} a ${consecutives[consecutives.length - 1]}`
+                : samples.length === 1 ? samples[0].sampleNumber : `${samples.length} muestras`;
+            return { id, representative: samples[0], samples, analysis: analyses.length === 1 ? analyses[0] : "Varios análisis", sampleRange };
+        }).filter((group) => group.samples.some((entry) => `${entry.op} ${entry.client} ${entry.sampleNumber} ${entry.samplingNumber} ${entry.analysis}`.toLowerCase().includes(query.toLowerCase())));
+    }, [entries, query, showCancelled]);
     const worksheetComplete = orderRows.length > 0 && orderRows.every((row) => row.uncertainty !== null && row.uncertainty !== "" && Boolean(row.result_value?.trim()) && Boolean(row.analyst_reference?.trim()) && Boolean(row.result_date) && Boolean(row.analyst_name?.trim()) && Boolean(row.released_by?.trim()));
     async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = authMode === "login" ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } }); setAuthMessage(result.error ? result.error.message : authMode === "login" ? "Acceso correcto." : "Cuenta creada. Revisa tu correo para confirmarla."); setAuthLoading(false); }
-    async function createEntry(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setCreating(true); let clientName = client.trim(); if (/^\d+$/.test(clientName)) { const { data, error } = await supabase.rpc("get_client_by_number", { p_client_number: Number(clientName) }); if (error || !data) { setCreating(false); window.alert("No se encontró un cliente activo con ese número."); return; } clientName = data.name; } const { error } = await supabase.rpc("create_sample_entry", { p_client_name: clientName, p_sampling_number: samplingNumber, p_sample_number: sampleNumber, p_package_code: analysis === "Personalizado" ? "PERSONALIZADO" : analysis, p_received_at: receivedAt, p_sampled_at: null, p_sampler_name: sampler || null, p_quotation_number: quotation || null, p_billing_details: null, p_precaptured: false }); setCreating(false); if (error) {
-        window.alert(`No se pudo registrar la entrada: ${error.message}`);
-        return;
-    } setClient(""); setSamplingNumber(""); setSampleNumber(""); setSampler(""); setQuotation(""); setView("entries"); await loadEntries(); }
     async function openSample(entry: Entry) { setSelected(entry); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
         return; const { data } = await supabase.from("worksheet_results").select("id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []).map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]); }
     async function generateAnalysisOrder() { if (!selected?.sampleId)
@@ -236,7 +240,11 @@ export default function Home() {
         next.delete(id);
     else
         next.add(id); return next; }); }
-    function toggleAll() { const visibleOrderIds = new Set(filteredEntries.map((entry) => entry.id)); setSelectedEntryIds((current) => visibleOrderIds.size > 0 && [...visibleOrderIds].every((id) => current.has(id)) ? new Set() : visibleOrderIds); }
+    function toggleOrderExpansion(id: string) { setExpandedOrderIds((current) => { const next = new Set(current); if (next.has(id))
+        next.delete(id);
+    else
+        next.add(id); return next; }); }
+    function toggleAll() { const visibleOrderIds = new Set(visibleOrderGroups.map((group) => group.id)); setSelectedEntryIds((current) => visibleOrderIds.size > 0 && [...visibleOrderIds].every((id) => current.has(id)) ? new Set() : visibleOrderIds); }
     async function runSelection(action: "cancel_sample_entry" | "restore_sample_entry" | "delete_sample_entry_permanently", confirmation: string) { if (!selectedEntryIds.size || !window.confirm(confirmation))
         return; const results = await Promise.all([...selectedEntryIds].map((id) => supabase.rpc(action, { p_order_id: id }))); const error = results.find((result) => result.error)?.error; if (error) {
         window.alert(error.message);
@@ -257,6 +265,43 @@ export default function Home() {
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
     return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); setSelectedEntryIds(new Set()); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); setSelectedEntryIds(new Set()); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
-    {view === "new" ? <form className="order-form" onSubmit={createEntry}><section className="form-card"><h2>Datos de recepción</h2><p>La OP se genera automáticamente al guardar. La fecha compromiso se calcula a ocho días hábiles desde la recepción.</p><div className="form-grid"><label>Cliente<input required value={client} onChange={(event) => setClient(event.target.value)}/></label><label>Análisis<select value={analysis} onChange={(event) => setAnalysis(event.target.value)}><option value="NOM-001-2021-24H">NOM-001-SEMARNAT-2021 · 24 horas</option><option>Personalizado</option></select></label><label>Número de muestreo<input required value={samplingNumber} onChange={(event) => setSamplingNumber(event.target.value)}/></label><label>Número de muestra<input required value={sampleNumber} onChange={(event) => setSampleNumber(event.target.value)}/></label><label>Muestreador<input value={sampler} onChange={(event) => setSampler(event.target.value)}/></label><label>Cotización<input value={quotation} onChange={(event) => setQuotation(event.target.value)}/></label><label>Fecha de recepción<input required type="date" value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)}/></label></div></section><section className="form-card"><h2>Fechas automáticas</h2><div className="summary-row"><div><span>Fecha compromiso</span><strong>{formatDate(dueDate(receivedAt))}</strong></div><div><span>Número de informe</span><strong>Se asigna al emitir</strong></div></div></section><div className="form-actions"><button type="button" className="button secondary" onClick={() => setView("entries")}>Cancelar</button><button className="button primary" disabled={creating}>{creating ? "Guardando…" : "Registrar entrada"}</button></div></form> : <section className="table-card"><div className="table-toolbar"><div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{filteredEntries.length} registros encontrados</p></div>{selectedEntryIds.size > 0 && <>{showCancelled && <button className="button secondary" onClick={() => void runSelection("restore_sample_entry", `¿Restaurar ${selectedEntryIds.size} OP(s)?`)}>Restaurar ({selectedEntryIds.size})</button>}<button className="button danger" onClick={() => void runSelection(showCancelled ? "delete_sample_entry_permanently" : "cancel_sample_entry", showCancelled ? `¿Eliminar definitivamente ${selectedEntryIds.size} OP(s)? Esta acción no se puede deshacer.` : `¿Enviar ${selectedEntryIds.size} OP(s) a eliminados?`)}>{showCancelled ? "Eliminar definitivamente" : "Eliminar OP"} ({selectedEntryIds.size})</button></>}<input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/></div><div className="table-wrap"><table className="intake-table"><thead><tr><th><input type="checkbox" aria-label="Seleccionar todas" checked={filteredEntries.length > 0 && [...new Set(filteredEntries.map((entry) => entry.id))].every((id) => selectedEntryIds.has(id))} onChange={toggleAll}/></th><th>OP</th><th>Cliente</th><th>Análisis</th><th>No. muestra</th><th>Fecha entrada</th><th>No. muestreo</th><th>Muestreador</th><th>Cotización</th><th>Fecha salida</th><th>Informe</th></tr></thead><tbody>{filteredEntries.map((entry) => <tr key={entry.sampleId} className={entry.isCancelled ? "cancelled-row" : ""}><td><input type="checkbox" aria-label={`Seleccionar ${entry.op}`} checked={selectedEntryIds.has(entry.id)} onChange={() => toggleEntry(entry.id)}/></td><td><strong>{entry.op}</strong></td><td>{entry.client}</td><td>{entry.analysis}</td><td><button className="sample-link" onClick={() => void openSample(entry)}>{entry.sampleNumber}</button></td><td>{entry.received}</td><td>{entry.samplingNumber}</td><td>{entry.sampler}</td><td>{entry.quotation}</td><td><button className="emission-link" onClick={() => openEmission(entry)}>{formatDate(entry.issuedAt)}</button></td><td><button className="emission-link" onClick={() => openEmission(entry)}>{entry.reportNumber || "Registrar"}</button></td></tr>)}</tbody></table></div></section>}
+    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : <section className="table-card">
+      <div className="table-toolbar">
+        <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
+        {selectedEntryIds.size > 0 && <>{showCancelled && <button className="button secondary" onClick={() => void runSelection("restore_sample_entry", `¿Restaurar ${selectedEntryIds.size} OP(s)?`)}>Restaurar ({selectedEntryIds.size})</button>}<button className="button danger" onClick={() => void runSelection(showCancelled ? "delete_sample_entry_permanently" : "cancel_sample_entry", showCancelled ? `¿Eliminar definitivamente ${selectedEntryIds.size} OP(s)? Esta acción no se puede deshacer.` : `¿Enviar ${selectedEntryIds.size} OP(s) a eliminados?`)}>{showCancelled ? "Eliminar definitivamente" : "Eliminar OP"} ({selectedEntryIds.size})</button></>}
+        <input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/>
+      </div>
+      <div className="table-wrap"><table className="intake-table">
+        <thead><tr><th><input type="checkbox" aria-label="Seleccionar todas" checked={visibleOrderGroups.length > 0 && visibleOrderGroups.every((group) => selectedEntryIds.has(group.id))} onChange={toggleAll}/></th><th>OP</th><th>Cliente</th><th>Análisis</th><th>No. muestra</th><th>Fecha entrada</th><th>No. muestreo</th><th>Muestreador</th><th>Cotización</th><th>Fecha salida</th><th>Informe</th></tr></thead>
+        <tbody>{visibleOrderGroups.map((group) => {
+          const entry = group.representative;
+          const hasMultipleSamples = group.samples.length > 1;
+          const expanded = hasMultipleSamples && expandedOrderIds.has(group.id);
+          return <Fragment key={group.id}>
+            <tr className={entry.isCancelled ? "cancelled-row order-summary-row" : "order-summary-row"}>
+              <td><input type="checkbox" aria-label={`Seleccionar ${entry.op}`} checked={selectedEntryIds.has(group.id)} onChange={() => toggleEntry(group.id)}/></td>
+              <td><strong>{entry.op}</strong></td>
+              <td>{entry.client}</td>
+              <td>{hasMultipleSamples ? <div className="analysis-group-cell"><span>{group.analysis}</span><button type="button" className="expand-samples" aria-label={expanded ? `Ocultar muestras de ${entry.op}` : `Mostrar ${group.samples.length} muestras de ${entry.op}`} aria-expanded={expanded} onClick={() => toggleOrderExpansion(group.id)}><span aria-hidden="true">▼</span></button></div> : entry.analysis}</td>
+              <td>{hasMultipleSamples ? <span className="sample-range">{group.sampleRange}</span> : <button className="sample-link" onClick={() => void openSample(entry)}>{entry.sampleNumber}</button>}</td>
+              <td>{entry.received}</td>
+              <td>{entry.samplingNumber}</td>
+              <td>{entry.sampler}</td>
+              <td>{entry.quotation}</td>
+              <td><button className="emission-link" onClick={() => openEmission(entry)}>{formatDate(entry.issuedAt)}</button></td>
+              <td><button className="emission-link" onClick={() => openEmission(entry)}>{entry.reportNumber || "Registrar"}</button></td>
+            </tr>
+            {hasMultipleSamples && expanded && group.samples.map((sample, index) => <tr className="sample-child-row" key={sample.sampleId}>
+              <td></td>
+              <td><span className="sample-position">Muestra {index + 1}</span></td>
+              <td></td>
+              <td>{sample.analysis}</td>
+              <td><button className="sample-link" onClick={() => void openSample(sample)}>{sample.sampleNumber}</button></td>
+              <td colSpan={6}></td>
+            </tr>)}
+          </Fragment>;
+        })}</tbody>
+      </table></div>
+    </section>}
   </section>{selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button><p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div><label><span>Fecha de muestreo</span><input type="date" value={sampledInput} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}><input type="number" min="0" step="0.00001" value={row.uncertainty || ""} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/><div><strong>{row.label}</strong></div><input value={row.result_value || ""} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/><input maxLength={3} value={row.analyst_name || ""} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">Esta orden no tiene aún una plantilla de parámetros.</p>}<button className="button primary full" disabled={savingOrder} onClick={() => void saveAnalysisOrder()}>{savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 001"/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
 }
