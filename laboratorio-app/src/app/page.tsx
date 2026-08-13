@@ -45,10 +45,24 @@ type ClientRecord = {
     name: string;
     address: string | null;
     contact_name: string | null;
+    email: string | null;
     rfc: string | null;
     phone: string | null;
 };
+type AppRole = "administrador" | "recepcion" | "analista" | "revisor";
+type StaffSample = {
+    order_id: string;
+    sample_id: string;
+    sample_code: string;
+    received_at: string | null;
+    due_date: string | null;
+    analysis_order_created_at: string | null;
+    total_results: number;
+    captured_results: number;
+    completion_percent: number;
+};
 const dash = "—";
+const reactSidebarEnabled = true;
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value.slice(0, 10)}T12:00:00`)) : dash;
 function sampleConsecutive(sampleNumber: string) {
     return sampleNumber.match(/-(\d{4})$/)?.[1] || null;
@@ -62,7 +76,8 @@ export default function Home() {
     const [fullName, setFullName] = useState("");
     const [authMessage, setAuthMessage] = useState("");
     const [authLoading, setAuthLoading] = useState(false);
-    const [view, setView] = useState<"entries" | "new" | "clients">("entries");
+    const [view, setView] = useState<"entries" | "new" | "clients" | "samples">("entries");
+    const [userRole, setUserRole] = useState<AppRole | null>(null);
     const [entries, setEntries] = useState<Entry[]>([]);
     const [query, setQuery] = useState("");
     const [showCancelled, setShowCancelled] = useState(false);
@@ -90,6 +105,9 @@ export default function Home() {
     const [clientMessage, setClientMessage] = useState("");
     const [clientDirectory, setClientDirectory] = useState<ClientRecord[]>([]);
     const [clientDirectoryVisible, setClientDirectoryVisible] = useState(false);
+    const [intakeSubnavVisible, setIntakeSubnavVisible] = useState(false);
+    const [clientsSubnavVisible, setClientsSubnavVisible] = useState(false);
+    const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
     async function loadEntries() {
         const { data, error } = await supabase.from("analysis_orders").select("id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_label, analysis_packages(code, name))").order("created_at", { ascending: false });
         if (error || !data)
@@ -108,30 +126,94 @@ export default function Home() {
         }));
     }
     async function loadClientDirectory() {
-        const { data, error } = await supabase.from("clients").select("client_number, name, address, contact_name, rfc, phone").eq("active", true).order("client_number");
+        const { data, error } = await supabase.from("clients").select("client_number, name, address, contact_name, email, rfc, phone").eq("active", true).order("client_number");
         if (!error && data) setClientDirectory(data as ClientRecord[]);
     }
-    useEffect(() => { supabase.auth.getSession().then(({ data: { session: active } }) => { setSession(active); setAuthReady(true); }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, active) => { setSession(active); setAuthReady(true); }); return () => subscription.unsubscribe(); }, []);
+    async function loadUserRole(activeSession: Session) {
+        const { data } = await supabase.from("profiles").select("role").eq("id", activeSession.user.id).maybeSingle();
+        const role = data?.role as AppRole | undefined;
+        setUserRole(role || null);
+        if (role === "analista") setView("samples");
+    }
+    async function loadStaffSamples() {
+        const { data, error } = await supabase.rpc("list_staff_samples");
+        if (!error && data) setStaffSamples(data as StaffSample[]);
+    }
+    useEffect(() => {
+        if (reactSidebarEnabled) return;
+        if (!session) return;
+        const nav = document.querySelector(".sidebar nav");
+        if (!nav || document.getElementById("samples-navigation")) return;
+        const button = document.createElement("button");
+        button.id = "samples-navigation";
+        button.className = "nav-item";
+        button.textContent = "▤   Muestras";
+        button.onclick = () => { setView("samples"); setShowCancelled(false); };
+        const clientsButton = document.getElementById("clients-navigation") || [...nav.querySelectorAll("button")].find((item) => item.textContent?.includes("Clientes"));
+        if (clientsButton?.nextSibling) nav.insertBefore(button, clientsButton.nextSibling);
+        else {
+            const firstMuted = nav.querySelector(".muted");
+            if (firstMuted) nav.insertBefore(button, firstMuted);
+            else nav.append(button);
+        }
+        return () => button.remove();
+    }, [session, userRole, view]);
+    useEffect(() => {
+        if (reactSidebarEnabled) return;
+        if (userRole !== "analista") return;
+        const nav = document.querySelector(".sidebar nav");
+        if (!nav) return;
+        const buttons = [...nav.querySelectorAll("button")];
+        buttons.filter((button) => button.id !== "samples-navigation" && !button.classList.contains("muted")).forEach((button) => { button.style.display = "none"; });
+    }, [userRole, view]);
+    useEffect(() => { supabase.auth.getSession().then(({ data: { session: active } }) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, active) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); else setUserRole(null); }); return () => subscription.unsubscribe(); }, []);
     useEffect(() => { if (!session)
         return; const timer = window.setTimeout(() => { void loadEntries(); }, 0); return () => window.clearTimeout(timer); }, [session]);
     useEffect(() => {
-        if (!session || view === "clients") return;
+        if (reactSidebarEnabled) return;
+        if (!session || userRole === "analista" || view === "clients") return;
         const nav = document.querySelector(".sidebar nav");
         if (!nav || document.getElementById("clients-navigation")) return;
         const button = document.createElement("button");
         button.id = "clients-navigation";
         button.className = "nav-item";
-        button.textContent = "Clientes";
-        button.onclick = () => setView("clients");
+        button.textContent = "▣   Clientes";
+        button.onclick = () => { setView("clients"); setClientsSubnavVisible((visible) => !visible); };
         nav.insertBefore(button, nav.children[2] || null);
         return () => button.remove();
-    }, [session, view]);
+    }, [session, userRole, view]);
+    useEffect(() => {
+        if (reactSidebarEnabled) return;
+        if (!session) return;
+        const nav = document.querySelector(".sidebar nav");
+        if (!nav) return;
+        const buttons = [...nav.querySelectorAll("button")];
+        const intakeButton = buttons.find((button) => button.textContent?.includes("Entrada de muestras"));
+        const cancelledButton = buttons.find((button) => button.textContent?.includes("OPs eliminados"));
+        const clientsButton = buttons.find((button) => button.textContent?.includes("Clientes"));
+        const directoryButton = document.getElementById("client-directory-navigation");
+        if (intakeButton instanceof HTMLButtonElement) {
+            if (intakeButton.textContent?.trim() === "Entrada de muestras") intakeButton.textContent = "▦   Entrada de muestras";
+            intakeButton.onclick = () => {
+                const nextVisible = !intakeSubnavVisible;
+                setView("entries"); setShowCancelled(false); setSelectedEntryIds(new Set()); setIntakeSubnavVisible(nextVisible);
+                if (cancelledButton instanceof HTMLElement) cancelledButton.style.display = nextVisible ? "" : "none";
+            };
+        }
+        if (cancelledButton instanceof HTMLElement) cancelledButton.style.display = intakeSubnavVisible && userRole !== "analista" ? "" : "none";
+        if (clientsButton instanceof HTMLButtonElement) {
+            if (clientsButton.textContent?.trim() === "Clientes") clientsButton.textContent = "▣   Clientes";
+            clientsButton.onclick = () => { setView("clients"); setClientDirectoryVisible(false); setClientsSubnavVisible((visible) => !visible); };
+        }
+        if (directoryButton instanceof HTMLElement) directoryButton.style.display = clientsSubnavVisible ? "" : "none";
+    }, [session, userRole, view, intakeSubnavVisible, clientsSubnavVisible]);
     useEffect(() => {
         if (view !== "clients") return;
         const attentionLabel = [...document.querySelectorAll("label")].find((label) => label.textContent?.trim() === "Atención a");
         attentionLabel?.remove();
     }, [view]);
     useEffect(() => {
+        if (reactSidebarEnabled) return;
         if (view !== "clients") return;
         const nav = document.querySelector(".sidebar nav");
         if (!nav || document.getElementById("client-directory-navigation")) return;
@@ -140,7 +222,9 @@ export default function Home() {
         button.className = "nav-item nav-subitem";
         button.textContent = "↳ Listado de clientes";
         button.onclick = () => setClientDirectoryVisible(true);
-        nav.append(button);
+        const clientsButton = document.getElementById("clients-navigation") || [...nav.querySelectorAll("button")].find((item) => item.textContent?.includes("Clientes"));
+        if (clientsButton?.nextSibling) nav.insertBefore(button, clientsButton.nextSibling);
+        else nav.append(button);
         return () => button.remove();
     }, [view]);
     useEffect(() => {
@@ -157,30 +241,98 @@ export default function Home() {
         const heading = document.createElement("div"); heading.className = "table-toolbar";
         const title = document.createElement("div"); const h2 = document.createElement("h2"); h2.textContent = "Clientes registrados"; const count = document.createElement("p"); count.textContent = `${clientDirectory.length} clientes activos`; title.append(h2, count); heading.append(title);
         const tableWrap = document.createElement("div"); tableWrap.className = "table-wrap"; const table = document.createElement("table");
-        const header = document.createElement("thead"); const headerRow = document.createElement("tr"); ["ID cliente", "Cliente", "Dirección", "Contacto", "RFC", "Teléfono"].forEach((label) => { const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell); }); header.append(headerRow); table.append(header);
-        const body = document.createElement("tbody"); clientDirectory.forEach((client) => { const row = document.createElement("tr"); [client.client_number.toString(), client.name, client.address || dash, client.contact_name || dash, client.rfc || dash, client.phone || dash].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }); body.append(row); }); table.append(body); tableWrap.append(table); section.append(heading, tableWrap); form.append(section);
+        const header = document.createElement("thead"); const headerRow = document.createElement("tr"); ["ID cliente", "Cliente", "Dirección", "Contacto", "E-mail", "RFC", "Teléfono"].forEach((label) => { const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell); }); header.append(headerRow); table.append(header);
+        const body = document.createElement("tbody"); clientDirectory.forEach((client) => { const row = document.createElement("tr"); [client.client_number.toString(), client.name, client.address || dash, client.contact_name || dash, client.email || dash, client.rfc || dash, client.phone || dash].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }); body.append(row); }); table.append(body); tableWrap.append(table); section.append(heading, tableWrap); form.append(section);
     }, [view, clientDirectory]);
     useEffect(() => {
         if (view !== "clients") return;
         const form = document.querySelector(".order-form");
-        const navButtons = document.querySelectorAll(".sidebar nav .nav-item");
-        const clientsButton = [...navButtons].find((button) => button.textContent?.trim() === "Clientes") as HTMLButtonElement | undefined;
-        if (clientsButton) clientsButton.onclick = () => setClientDirectoryVisible(false);
         const formCard = form?.querySelector(".form-card") as HTMLElement | null;
         const actions = form?.querySelector(".form-actions") as HTMLElement | null;
         const directory = document.getElementById("client-directory");
         if (formCard) formCard.style.display = clientDirectoryVisible ? "none" : "block";
         if (actions) actions.style.display = clientDirectoryVisible ? "none" : "flex";
         if (directory) directory.style.display = clientDirectoryVisible ? "block" : "none";
-        const directoryButton = document.getElementById("client-directory-navigation");
-        clientsButton?.classList.toggle("active", !clientDirectoryVisible);
-        directoryButton?.classList.toggle("active", clientDirectoryVisible);
     }, [view, clientDirectory, clientDirectoryVisible]);
+    useEffect(() => {
+        if (reactSidebarEnabled) return;
+        if (!session) return;
+        const nav = document.querySelector(".sidebar nav");
+        if (!nav) return;
+        const buttons = [...nav.querySelectorAll("button")];
+        const intake = buttons.find((button) => button.textContent?.includes("Entrada de muestras"));
+        const cancelled = buttons.find((button) => button.textContent?.includes("OPs eliminados"));
+        const clients = buttons.find((button) => button.textContent?.includes("Clientes"));
+        const directory = document.getElementById("client-directory-navigation");
+        const samples = document.getElementById("samples-navigation");
+        const muted = buttons.filter((button) => button.classList.contains("muted"));
+        if (intake instanceof HTMLElement) intake.style.display = userRole === "analista" ? "none" : "";
+        if (clients instanceof HTMLElement) clients.style.display = userRole === "analista" ? "none" : "";
+        if (cancelled instanceof HTMLElement) cancelled.style.display = userRole !== "analista" && intakeSubnavVisible ? "" : "none";
+        if (directory instanceof HTMLElement) directory.style.display = clientsSubnavVisible ? "" : "none";
+        [intake, cancelled, clients, directory, samples, ...muted].forEach((item) => {
+            if (item instanceof HTMLElement) nav.append(item);
+        });
+    }, [session, userRole, view, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible]);
     useEffect(() => {
         if (view !== "entries" || showCancelled) return;
         const button = document.querySelector(".topbar > .button.primary") as HTMLButtonElement | null;
         if (button) button.textContent = "Nueva OP";
     }, [view, showCancelled]);
+    useEffect(() => {
+        if (!session || view !== "samples") return;
+        const timer = window.setTimeout(() => { void loadStaffSamples(); }, 0);
+        return () => window.clearTimeout(timer);
+    }, [session, view]);
+    useEffect(() => {
+        if (reactSidebarEnabled) return;
+        const samplesButton = document.getElementById("samples-navigation");
+        samplesButton?.classList.toggle("active", view === "samples");
+        if (view === "samples") {
+            const title = document.querySelector(".topbar h1");
+            if (title) title.textContent = "Muestras";
+        }
+    }, [view, staffSamples]);
+    useEffect(() => {
+        if (!session) return;
+        const nav = document.querySelector(".sidebar nav");
+        if (!nav) return;
+        const originalItems = [...nav.children] as HTMLElement[];
+        originalItems.forEach((item) => { item.style.display = "none"; });
+        const menu = document.createElement("div");
+        menu.className = "react-sidebar-menu";
+        const makeButton = (label: string, className: string, onClick?: () => void) => {
+            const button = document.createElement("button");
+            button.className = className;
+            button.textContent = label;
+            if (onClick) button.onclick = onClick;
+            return button;
+        };
+        const items: HTMLButtonElement[] = [];
+        if (userRole !== "analista") {
+            items.push(makeButton("▦   Entrada de muestras", !showCancelled && view === "entries" ? "nav-item active" : "nav-item", () => {
+                setView("entries"); setShowCancelled(false); setSelectedEntryIds(new Set()); setIntakeSubnavVisible((visible) => !visible);
+            }));
+            if (intakeSubnavVisible) items.push(makeButton("↳   OPs eliminados", showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
+                setView("entries"); setShowCancelled(true); setSelectedEntryIds(new Set());
+            }));
+            items.push(makeButton("▣   Clientes", view === "clients" && !clientDirectoryVisible ? "nav-item active" : "nav-item", () => {
+                setView("clients"); setClientDirectoryVisible(false); setClientsSubnavVisible((visible) => !visible);
+            }));
+            if (clientsSubnavVisible) items.push(makeButton("↳   Listado de clientes", view === "clients" && clientDirectoryVisible ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
+                setView("clients"); setClientDirectoryVisible(true);
+            }));
+        }
+        items.push(makeButton("▤   Muestras", view === "samples" ? "nav-item active" : "nav-item", () => { setView("samples"); setShowCancelled(false); }));
+        items.push(makeButton("◫   Informes", "nav-item muted"));
+        items.push(makeButton("▥   Reportes", "nav-item muted"));
+        menu.append(...items);
+        nav.append(menu);
+        return () => {
+            menu.remove();
+            originalItems.forEach((item) => { item.style.display = ""; });
+        };
+    }, [session, userRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible]);
     const visibleOrderGroups = useMemo(() => {
         const groups = new Map<string, Entry[]>();
         entries.filter((entry) => showCancelled ? entry.isCancelled : !entry.isCancelled).forEach((entry) => {
@@ -205,6 +357,9 @@ export default function Home() {
     async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = authMode === "login" ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } }); setAuthMessage(result.error ? result.error.message : authMode === "login" ? "Acceso correcto." : "Cuenta creada. Revisa tu correo para confirmarla."); setAuthLoading(false); }
     async function openSample(entry: Entry) { setSelected(entry); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
         return; const { data } = await supabase.from("worksheet_results").select("id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []).map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]); }
+    function openStaffSample(sample: StaffSample) {
+        void openSample({ id: sample.order_id, op: dash, client: dash, samplingNumber: dash, sampler: dash, quotation: dash, received: formatDate(sample.received_at), due: formatDate(sample.due_date), reportNumber: "", analysis: dash, sampleNumber: sample.sample_code, sampleId: sample.sample_id, analysisOrderCreatedAt: sample.analysis_order_created_at, sampledAt: null, issuedAt: null, isCancelled: false });
+    }
     async function generateAnalysisOrder() { if (!selected?.sampleId)
         return; setGeneratingOrder(true); const result = await supabase.rpc("create_worksheet_for_sample", { p_sample_id: selected.sampleId }); setGeneratingOrder(false); if (result.error) {
         window.alert(`No se pudo generar la orden: ${result.error.message}`);
@@ -214,10 +369,10 @@ export default function Home() {
     function syncHorizontalScroll(source: "table" | "bottom", scrollLeft: number) { const target = source === "table" ? orderBottomScrollRef.current : orderTableRef.current; if (target && Math.abs(target.scrollLeft - scrollLeft) > 1)
         target.scrollLeft = scrollLeft; }
     async function saveAnalysisOrder() { if (!selected)
-        return; setSavingOrder(true); const dateResult = await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const results = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty === "" ? null : row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date || null, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); setSavingOrder(false); const error = dateResult.error || results.find((result) => result.error)?.error; if (error) {
+        return; setSavingOrder(true); const dateResult = userRole === "analista" ? { error: null } : await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const results = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty === "" ? null : row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date || null, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); setSavingOrder(false); const error = dateResult.error || results.find((result) => result.error)?.error; if (error) {
         window.alert(`No se pudo guardar la orden: ${error.message}`);
         return;
-    } await loadEntries(); setSelected({ ...selected, sampledAt: sampledInput || null }); if (worksheetComplete) {
+    } if (view === "samples") await loadStaffSamples(); else await loadEntries(); setSelected({ ...selected, sampledAt: sampledInput || null }); if (worksheetComplete && userRole !== "analista") {
         await issueReportFromWorksheet();
         return;
     } window.alert("Orden de análisis guardada."); }
@@ -265,7 +420,11 @@ export default function Home() {
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
     return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); setSelectedEntryIds(new Set()); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); setSelectedEntryIds(new Set()); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
-    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : <section className="table-card">
+    {view === "samples" && <section className="table-card">
+      <div className="table-toolbar"><div><h2>Muestras</h2><p>{staffSamples.length} muestras encontradas</p></div></div>
+      <div className="table-wrap"><table className="intake-table" style={{ width: "820px", minWidth: "820px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{staffSamples.length === 0 ? <tr><td colSpan={4}>No hay muestras disponibles.</td></tr> : staffSamples.map((sample) => <tr key={sample.sample_id}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
+    </section>}
+    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && <section className="table-card">
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
         {selectedEntryIds.size > 0 && <>{showCancelled && <button className="button secondary" onClick={() => void runSelection("restore_sample_entry", `¿Restaurar ${selectedEntryIds.size} OP(s)?`)}>Restaurar ({selectedEntryIds.size})</button>}<button className="button danger" onClick={() => void runSelection(showCancelled ? "delete_sample_entry_permanently" : "cancel_sample_entry", showCancelled ? `¿Eliminar definitivamente ${selectedEntryIds.size} OP(s)? Esta acción no se puede deshacer.` : `¿Enviar ${selectedEntryIds.size} OP(s) a eliminados?`)}>{showCancelled ? "Eliminar definitivamente" : "Eliminar OP"} ({selectedEntryIds.size})</button></>}
