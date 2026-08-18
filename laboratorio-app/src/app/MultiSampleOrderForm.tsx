@@ -7,6 +7,7 @@ type AnalysisPackage = { id: string; code: string; name: string };
 type Parameter = { id: string; name: string; unit: string | null };
 type MultiPackage = { id: string; name: string; sample_count: number };
 type MultiItem = { multi_package_id: string; sample_position: number; parameter_id: string; display_order: number };
+type ClientOption = { client_number: number; name: string; branch: string | null; contact_name: string | null; address: string | null; rfc: string | null };
 type SampleDraft = { mode: "package" | "custom"; packageId: string; parameterIds: string[] };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -27,6 +28,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [parameters, setParameters] = useState<Parameter[]>([]);
   const [multiPackages, setMultiPackages] = useState<MultiPackage[]>([]);
   const [multiItems, setMultiItems] = useState<MultiItem[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [client, setClient] = useState("");
   const [multiple, setMultiple] = useState(false);
   const [sampleCount, setSampleCount] = useState(1);
@@ -47,11 +49,12 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [builderSaving, setBuilderSaving] = useState(false);
 
   async function loadCatalogs() {
-    const [packageResult, parameterResult, multiResult, itemResult] = await Promise.all([
+    const [packageResult, parameterResult, multiResult, itemResult, clientResult] = await Promise.all([
       supabase.from("analysis_packages").select("id, code, name").eq("active", true).order("name"),
       supabase.from("parameters").select("id, name, unit").eq("active", true).order("name"),
       supabase.from("multi_packages").select("id, name, sample_count").eq("active", true).order("name"),
       supabase.from("multi_package_items").select("multi_package_id, sample_position, parameter_id, display_order").order("display_order"),
+      supabase.from("clients").select("client_number, name, branch, contact_name, address, rfc").eq("active", true).order("name"),
     ]);
     const packageData = (packageResult.data || []) as AnalysisPackage[];
     setPackages(packageData);
@@ -64,6 +67,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
     setParameters((parameterResult.data || []) as Parameter[]);
     setMultiPackages((multiResult.data || []) as MultiPackage[]);
     setMultiItems((itemResult.data || []) as MultiItem[]);
+    setClients((clientResult.data || []) as ClientOption[]);
   }
 
   useEffect(() => {
@@ -175,6 +179,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   }
 
   const selectedMultiName = useMemo(() => multiPackages.find((item) => item.id === selectedMultiPackage)?.name, [multiPackages, selectedMultiPackage]);
+  const selectedClient = useMemo(() => clients.find((item) => item.name.toLocaleLowerCase("es-MX") === client.trim().toLocaleLowerCase("es-MX") || item.client_number.toString() === client.trim()), [clients, client]);
 
   if (building) return <form className="order-form multi-order-form" onSubmit={(event) => { event.preventDefault(); void saveMultiPackage(); }}>
     <section className="form-card"><h2>Nuevo multipaquete de análisis</h2><p>Esta plantilla podrá reutilizarse en futuras OPs.</p><div className="form-grid"><label>Nombre del multipaquete<input required value={builderName} onChange={(event) => setBuilderName(event.target.value)} /></label><label>Cantidad de muestras<input required type="number" min="1" max="20" value={builderCount} onChange={(event) => changeBuilderCount(Number(event.target.value))} /></label></div></section>
@@ -187,7 +192,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       <h2>Datos de recepción</h2>
       <p>La OP se genera automáticamente al guardar. La fecha compromiso se calcula a ocho días hábiles desde la recepción.</p>
       <div className="form-grid">
-        <label>Cliente<input required value={client} onChange={(event) => setClient(event.target.value)} /></label>
+        <label>Cliente<input required list="existing-clients" value={client} onChange={(event) => setClient(event.target.value)} placeholder="Nombre o número de cliente" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={item.name}>{`Cliente ${item.client_number}${item.branch ? ` · ${item.branch}` : ""}`}</option>)}</datalist></label>
         <label>¿El laboratorio realizó el muestreo?<select required value={labSampling} onChange={(event) => { const value = event.target.value as "" | "yes" | "no"; setLabSampling(value); if (value === "no") { setSamplingNumber(""); setSampler("El cliente"); } else if (value === "yes" && sampler === "El cliente") { setSampler(""); } }}><option value="">Seleccionar…</option><option value="yes">Sí</option><option value="no">No</option></select></label>
         {labSampling === "yes" && <label>Número de muestreo<input required value={samplingNumber} onChange={(event) => setSamplingNumber(event.target.value)} /></label>}
         {labSampling === "yes" && <label>Muestreador<input value={sampler} onChange={(event) => setSampler(event.target.value)} /></label>}
@@ -197,6 +202,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
         <label>Fecha de recepción<input required type="date" value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)} /></label>
         {!multiple && <label>Análisis<select required value={samples[0].packageId} onChange={(event) => updateSample(0, { mode: "package", packageId: event.target.value })}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       </div>
+      {selectedClient && <div className="selected-client"><strong>Cliente {selectedClient.client_number}: {selectedClient.name}</strong><span>{[selectedClient.branch ? `Sucursal: ${selectedClient.branch}` : null, selectedClient.contact_name, selectedClient.rfc, selectedClient.address].filter(Boolean).join(" · ") || "Cliente existente seleccionado"}</span></div>}
     </section>
     <section className="form-card">
       <h2>Fechas automáticas</h2>

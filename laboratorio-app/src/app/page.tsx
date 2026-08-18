@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { MultiSampleOrderForm } from "./MultiSampleOrderForm";
+import { ParameterDirectory } from "./ParameterDirectory";
 type Entry = {
     id: string;
     op: string;
@@ -43,6 +44,7 @@ type OrderRow = {
 type ClientRecord = {
     client_number: number;
     name: string;
+    branch: string | null;
     address: string | null;
     contact_name: string | null;
     email: string | null;
@@ -76,7 +78,7 @@ export default function Home() {
     const [fullName, setFullName] = useState("");
     const [authMessage, setAuthMessage] = useState("");
     const [authLoading, setAuthLoading] = useState(false);
-    const [view, setView] = useState<"entries" | "new" | "clients" | "samples">("entries");
+    const [view, setView] = useState<"entries" | "new" | "clients" | "samples" | "parameters">("entries");
     const [userRole, setUserRole] = useState<AppRole | null>(null);
     const [entries, setEntries] = useState<Entry[]>([]);
     const [query, setQuery] = useState("");
@@ -95,6 +97,7 @@ export default function Home() {
     const [issuedInput, setIssuedInput] = useState("");
     const [savingEmission, setSavingEmission] = useState(false);
     const [newClientName, setNewClientName] = useState("");
+    const [newClientBranch, setNewClientBranch] = useState("");
     const [newClientContact, setNewClientContact] = useState("");
     const [newClientEmail, setNewClientEmail] = useState("");
     const [newClientPhone, setNewClientPhone] = useState("");
@@ -126,7 +129,7 @@ export default function Home() {
         }));
     }
     async function loadClientDirectory() {
-        const { data, error } = await supabase.from("clients").select("client_number, name, address, contact_name, email, rfc, phone").eq("active", true).order("client_number");
+        const { data, error } = await supabase.from("clients").select("client_number, name, branch, address, contact_name, email, rfc, phone").eq("active", true).order("client_number");
         if (!error && data) setClientDirectory(data as ClientRecord[]);
     }
     async function loadUserRole(activeSession: Session) {
@@ -241,8 +244,8 @@ export default function Home() {
         const heading = document.createElement("div"); heading.className = "table-toolbar";
         const title = document.createElement("div"); const h2 = document.createElement("h2"); h2.textContent = "Clientes registrados"; const count = document.createElement("p"); count.textContent = `${clientDirectory.length} clientes activos`; title.append(h2, count); heading.append(title);
         const tableWrap = document.createElement("div"); tableWrap.className = "table-wrap"; const table = document.createElement("table");
-        const header = document.createElement("thead"); const headerRow = document.createElement("tr"); ["ID cliente", "Cliente", "Dirección", "Contacto", "E-mail", "RFC", "Teléfono"].forEach((label) => { const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell); }); header.append(headerRow); table.append(header);
-        const body = document.createElement("tbody"); clientDirectory.forEach((client) => { const row = document.createElement("tr"); [client.client_number.toString(), client.name, client.address || dash, client.contact_name || dash, client.email || dash, client.rfc || dash, client.phone || dash].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }); body.append(row); }); table.append(body); tableWrap.append(table); section.append(heading, tableWrap); form.append(section);
+        const header = document.createElement("thead"); const headerRow = document.createElement("tr"); ["ID cliente", "Cliente", "Sucursal", "Dirección", "Contacto", "E-mail", "RFC", "Teléfono"].forEach((label) => { const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell); }); header.append(headerRow); table.append(header);
+        const body = document.createElement("tbody"); clientDirectory.forEach((client) => { const row = document.createElement("tr"); [client.client_number.toString(), client.name, client.branch || dash, client.address || dash, client.contact_name || dash, client.email || dash, client.rfc || dash, client.phone || dash].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }); body.append(row); }); table.append(body); tableWrap.append(table); section.append(heading, tableWrap); form.append(section);
     }, [view, clientDirectory]);
     useEffect(() => {
         if (view !== "clients") return;
@@ -324,6 +327,7 @@ export default function Home() {
             }));
         }
         items.push(makeButton("▤   Muestras", view === "samples" ? "nav-item active" : "nav-item", () => { setView("samples"); setShowCancelled(false); }));
+        if (userRole === "administrador" || userRole === "recepcion") items.push(makeButton("⌁   Parámetros", view === "parameters" ? "nav-item active" : "nav-item", () => { setView("parameters"); setShowCancelled(false); }));
         items.push(makeButton("◫   Informes", "nav-item muted"));
         items.push(makeButton("▥   Reportes", "nav-item muted"));
         menu.append(...items);
@@ -333,6 +337,11 @@ export default function Home() {
             originalItems.forEach((item) => { item.style.display = ""; });
         };
     }, [session, userRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible]);
+    useEffect(() => {
+        if (view !== "samples" && view !== "parameters") return;
+        const title = document.querySelector(".topbar h1");
+        if (title) title.textContent = view === "samples" ? "Muestras" : "Parámetros";
+    }, [view]);
     const visibleOrderGroups = useMemo(() => {
         const groups = new Map<string, Entry[]>();
         entries.filter((entry) => showCancelled ? entry.isCancelled : !entry.isCancelled).forEach((entry) => {
@@ -407,16 +416,16 @@ export default function Home() {
     } setSelectedEntryIds(new Set()); await loadEntries(); }
     async function createClient(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault(); setClientSaving(true); setClientMessage("");
-        const { data, error } = await supabase.rpc("create_client", { p_name: newClientName, p_contact_name: newClientContact || null, p_email: newClientEmail || null, p_phone: newClientPhone || null, p_address: newClientAddress || null, p_rfc: newClientRfc || null, p_attention_to: newClientAttention || null });
+        const { data, error } = await supabase.rpc("create_client", { p_name: newClientName, p_contact_name: newClientContact || null, p_email: newClientEmail || null, p_phone: newClientPhone || null, p_address: newClientAddress || null, p_rfc: newClientRfc || null, p_attention_to: newClientAttention || null, p_branch: newClientBranch || null });
         setClientSaving(false);
         if (error) { setClientMessage(`No se pudo guardar: ${error.message}`); return; }
         setClientMessage(`Cliente guardado. Número de cliente: ${data.client_number}`);
-        setNewClientName(""); setNewClientContact(""); setNewClientEmail(""); setNewClientPhone(""); setNewClientAddress(""); setNewClientRfc(""); setNewClientAttention("");
+        setNewClientName(""); setNewClientBranch(""); setNewClientContact(""); setNewClientEmail(""); setNewClientPhone(""); setNewClientAddress(""); setNewClientRfc(""); setNewClientAttention("");
         await loadClientDirectory();
     }
     if (!authReady)
         return <main className="auth-page"><p>Conectando con LabAqua…</p></main>;
-    if (view === "clients") return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className="nav-item" onClick={() => setView("entries")}>Entrada de muestras</button><button className="nav-item active">Clientes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session?.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session?.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>Clientes</h1></div></header><form className="order-form" onSubmit={createClient}><section className="form-card"><h2>Alta de cliente</h2><p>Al guardar se asigna un número único de cliente para usar en nuevas OPs.</p><div className="form-grid"><label>Nombre o razón social<input required value={newClientName} onChange={(event) => setNewClientName(event.target.value)} /></label><label>RFC<input value={newClientRfc} onChange={(event) => setNewClientRfc(event.target.value)} /></label><label>Contacto<input value={newClientContact} onChange={(event) => setNewClientContact(event.target.value)} /></label><label>Atención a<input value={newClientAttention} onChange={(event) => setNewClientAttention(event.target.value)} /></label><label>Teléfono<input value={newClientPhone} onChange={(event) => setNewClientPhone(event.target.value)} /></label><label>Correo electrónico<input type="email" value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} /></label><label>Dirección<input value={newClientAddress} onChange={(event) => setNewClientAddress(event.target.value)} /></label></div>{clientMessage && <p className="auth-message">{clientMessage}</p>}</section><div className="form-actions"><button type="button" className="button secondary" onClick={() => setView("entries")}>Cancelar</button><button className="button primary" disabled={clientSaving}>{clientSaving ? "Guardando…" : "Guardar cliente"}</button></div></form></section></main>;
+    if (view === "clients") return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className="nav-item" onClick={() => setView("entries")}>Entrada de muestras</button><button className="nav-item active">Clientes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session?.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session?.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>Clientes</h1></div></header><form className="order-form" onSubmit={createClient}><section className="form-card"><h2>Alta de cliente</h2><p>Al guardar se asigna un número único de cliente para usar en nuevas OPs.</p><div className="form-grid"><label>Nombre o razón social<input required value={newClientName} onChange={(event) => setNewClientName(event.target.value)} /></label><label>Sucursal<input value={newClientBranch} onChange={(event) => setNewClientBranch(event.target.value)} placeholder="Ej. Planta norte" /></label><label>Dirección<input value={newClientAddress} onChange={(event) => setNewClientAddress(event.target.value)} /></label><label>Contacto<input value={newClientContact} onChange={(event) => setNewClientContact(event.target.value)} /></label><label>Atención a<input value={newClientAttention} onChange={(event) => setNewClientAttention(event.target.value)} /></label><label>Teléfono<input value={newClientPhone} onChange={(event) => setNewClientPhone(event.target.value)} /></label><label>Correo electrónico<input type="email" value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} /></label><label>RFC<input value={newClientRfc} onChange={(event) => setNewClientRfc(event.target.value)} /></label></div>{clientMessage && <p className="auth-message">{clientMessage}</p>}</section><div className="form-actions"><button type="button" className="button secondary" onClick={() => setView("entries")}>Cancelar</button><button className="button primary" disabled={clientSaving}>{clientSaving ? "Guardando…" : "Guardar cliente"}</button></div></form></section></main>;
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
     return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); setSelectedEntryIds(new Set()); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); setSelectedEntryIds(new Set()); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
@@ -424,13 +433,14 @@ export default function Home() {
       <div className="table-toolbar"><div><h2>Muestras</h2><p>{staffSamples.length} muestras encontradas</p></div></div>
       <div className="table-wrap"><table className="intake-table" style={{ width: "820px", minWidth: "820px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{staffSamples.length === 0 ? <tr><td colSpan={4}>No hay muestras disponibles.</td></tr> : staffSamples.map((sample) => <tr key={sample.sample_id}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
     </section>}
-    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && <section className="table-card">
+    {view === "parameters" && <ParameterDirectory canCreate={userRole === "administrador" || userRole === "recepcion"} />}
+    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && <section className="table-card">
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
         {selectedEntryIds.size > 0 && <>{showCancelled && <button className="button secondary" onClick={() => void runSelection("restore_sample_entry", `¿Restaurar ${selectedEntryIds.size} OP(s)?`)}>Restaurar ({selectedEntryIds.size})</button>}<button className="button danger" onClick={() => void runSelection(showCancelled ? "delete_sample_entry_permanently" : "cancel_sample_entry", showCancelled ? `¿Eliminar definitivamente ${selectedEntryIds.size} OP(s)? Esta acción no se puede deshacer.` : `¿Enviar ${selectedEntryIds.size} OP(s) a eliminados?`)}>{showCancelled ? "Eliminar definitivamente" : "Eliminar OP"} ({selectedEntryIds.size})</button></>}
         <input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/>
       </div>
-      <div className="table-wrap"><table className="intake-table">
+      <div className="table-wrap"><table className="intake-table entries-table">
         <thead><tr><th><input type="checkbox" aria-label="Seleccionar todas" checked={visibleOrderGroups.length > 0 && visibleOrderGroups.every((group) => selectedEntryIds.has(group.id))} onChange={toggleAll}/></th><th>OP</th><th>Cliente</th><th>Análisis</th><th>No. muestra</th><th>Fecha entrada</th><th>No. muestreo</th><th>Muestreador</th><th>Cotización</th><th>Fecha salida</th><th>Informe</th></tr></thead>
         <tbody>{visibleOrderGroups.map((group) => {
           const entry = group.representative;
