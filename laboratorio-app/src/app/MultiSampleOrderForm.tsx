@@ -149,19 +149,15 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       setMessage("Asigna un paquete o parámetros a cada muestra."); return;
     }
 
+    const clientForOrder = clients.find((item) => item.client_number.toString() === client.trim());
+    if (!clientForOrder) { setMessage("Selecciona un cliente y sucursal de la lista."); return; }
     setSaving(true);
-    let clientName = client.trim();
-    if (/^\d+$/.test(clientName)) {
-      const lookup = await supabase.rpc("get_client_by_number", { p_client_number: Number(clientName) });
-      if (lookup.error || !lookup.data) { setSaving(false); setMessage("No se encontró un cliente activo con ese número."); return; }
-      clientName = (lookup.data as { name: string }).name;
-    }
     const payload = samples.map((sample) => ({
       ...((!multiple || usesPreset === "no") && sample.mode === "package" ? { package_id: sample.packageId } : {}),
       ...(multiple && usesPreset === "no" && sample.mode === "custom" ? { parameter_ids: sample.parameterIds } : {}),
     }));
     const { error } = await supabase.rpc("create_sample_entry_batch_auto", {
-      p_client_name: clientName,
+      p_client_name: clientForOrder.client_number.toString(),
       p_samples: payload,
       p_lab_sampling: labSampling === "yes",
       p_sampling_number: labSampling === "yes" ? samplingNumber : null,
@@ -179,7 +175,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   }
 
   const selectedMultiName = useMemo(() => multiPackages.find((item) => item.id === selectedMultiPackage)?.name, [multiPackages, selectedMultiPackage]);
-  const selectedClient = useMemo(() => clients.find((item) => item.name.toLocaleLowerCase("es-MX") === client.trim().toLocaleLowerCase("es-MX") || item.client_number.toString() === client.trim()), [clients, client]);
+  const selectedClient = useMemo(() => clients.find((item) => item.client_number.toString() === client.trim()), [clients, client]);
 
   if (building) return <form className="order-form multi-order-form" onSubmit={(event) => { event.preventDefault(); void saveMultiPackage(); }}>
     <section className="form-card"><h2>Nuevo multipaquete de análisis</h2><p>Esta plantilla podrá reutilizarse en futuras OPs.</p><div className="form-grid"><label>Nombre del multipaquete<input required value={builderName} onChange={(event) => setBuilderName(event.target.value)} /></label><label>Cantidad de muestras<input required type="number" min="1" max="20" value={builderCount} onChange={(event) => changeBuilderCount(Number(event.target.value))} /></label></div></section>
@@ -192,7 +188,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       <h2>Datos de recepción</h2>
       <p>La OP se genera automáticamente al guardar. La fecha compromiso se calcula a ocho días hábiles desde la recepción.</p>
       <div className="form-grid">
-        <label>Cliente<input required list="existing-clients" value={client} onChange={(event) => setClient(event.target.value)} placeholder="Nombre o número de cliente" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={item.name}>{`Cliente ${item.client_number}${item.branch ? ` · ${item.branch}` : ""}`}</option>)}</datalist></label>
+        <label>Cliente y sucursal<input required list="existing-clients" value={client} onChange={(event) => setClient(event.target.value)} placeholder="Buscar y seleccionar cliente" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={item.client_number.toString()}>{`${item.name}${item.branch ? ` · ${item.branch}` : " · Sin sucursal"}`}</option>)}</datalist></label>
         <label>¿El laboratorio realizó el muestreo?<select required value={labSampling} onChange={(event) => { const value = event.target.value as "" | "yes" | "no"; setLabSampling(value); if (value === "no") { setSamplingNumber(""); setSampler("El cliente"); } else if (value === "yes" && sampler === "El cliente") { setSampler(""); } }}><option value="">Seleccionar…</option><option value="yes">Sí</option><option value="no">No</option></select></label>
         {labSampling === "yes" && <label>Número de muestreo<input required value={samplingNumber} onChange={(event) => setSamplingNumber(event.target.value)} /></label>}
         {labSampling === "yes" && <label>Muestreador<input value={sampler} onChange={(event) => setSampler(event.target.value)} /></label>}

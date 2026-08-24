@@ -21,6 +21,7 @@ type Entry = {
     sampledAt: string | null;
     issuedAt: string | null;
     isCancelled: boolean;
+    status?: string;
 };
 type OrderGroup = {
     id: string;
@@ -42,6 +43,7 @@ type OrderRow = {
     released_by: string | null;
 };
 type ClientRecord = {
+    id: string;
     client_number: number;
     name: string;
     branch: string | null;
@@ -89,6 +91,8 @@ export default function Home() {
     const [orderRows, setOrderRows] = useState<OrderRow[]>([]);
     const [sampledInput, setSampledInput] = useState("");
     const [savingOrder, setSavingOrder] = useState(false);
+    const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
+    const [exportingReport, setExportingReport] = useState(false);
     const [generatingOrder, setGeneratingOrder] = useState(false);
     const orderTableRef = useRef<HTMLDivElement>(null);
     const orderBottomScrollRef = useRef<HTMLDivElement>(null);
@@ -108,6 +112,16 @@ export default function Home() {
     const [clientMessage, setClientMessage] = useState("");
     const [clientDirectory, setClientDirectory] = useState<ClientRecord[]>([]);
     const [clientDirectoryVisible, setClientDirectoryVisible] = useState(false);
+    const [expandedClientIds, setExpandedClientIds] = useState<Set<string>>(new Set());
+    const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
+    const [editClientName, setEditClientName] = useState("");
+    const [editClientBranch, setEditClientBranch] = useState("");
+    const [editClientAddress, setEditClientAddress] = useState("");
+    const [editClientContact, setEditClientContact] = useState("");
+    const [editClientEmail, setEditClientEmail] = useState("");
+    const [editClientRfc, setEditClientRfc] = useState("");
+    const [editClientPhone, setEditClientPhone] = useState("");
+    const [clientEditSaving, setClientEditSaving] = useState(false);
     const [intakeSubnavVisible, setIntakeSubnavVisible] = useState(false);
     const [clientsSubnavVisible, setClientsSubnavVisible] = useState(false);
     const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
@@ -124,13 +138,32 @@ export default function Home() {
                     code?: string;
                     name?: string;
                 } | null;
-                return { id: item.id, op: item.op_number, client: clientData?.name || dash, samplingNumber: sample.sampling_number || dash, sampler: item.sampler_name || dash, quotation: item.quotation_number || dash, received: formatDate(item.received_at), due: formatDate(item.due_date), reportNumber: item.report_number || "", analysis: sample.analysis_label || packageData?.name || packageData?.code || dash, sampleNumber: sample.sample_code, sampleId: sample.id, analysisOrderCreatedAt: sample.analysis_order_created_at || null, sampledAt: item.sampled_at || null, issuedAt: item.issued_at || null, isCancelled: item.status === "cancelada" };
+                return { id: item.id, op: item.op_number, client: clientData?.name || dash, samplingNumber: sample.sampling_number || dash, sampler: item.sampler_name || dash, quotation: item.quotation_number || dash, received: formatDate(item.received_at), due: formatDate(item.due_date), reportNumber: item.report_number || "", analysis: sample.analysis_label || packageData?.name || packageData?.code || dash, sampleNumber: sample.sample_code, sampleId: sample.id, analysisOrderCreatedAt: sample.analysis_order_created_at || null, sampledAt: item.sampled_at || null, issuedAt: item.issued_at || null, isCancelled: item.status === "cancelada", status: item.status };
             });
         }));
     }
     async function loadClientDirectory() {
-        const { data, error } = await supabase.from("clients").select("client_number, name, branch, address, contact_name, email, rfc, phone").eq("active", true).order("client_number");
+        const { data, error } = await supabase.from("clients").select("id, client_number, name, branch, address, contact_name, email, rfc, phone").eq("active", true).order("client_number");
         if (!error && data) setClientDirectory(data as ClientRecord[]);
+    }
+    function startEditingClient(client: ClientRecord) {
+        setEditingClient(client);
+        setEditClientName(client.name);
+        setEditClientBranch(client.branch || "");
+        setEditClientAddress(client.address || "");
+        setEditClientContact(client.contact_name || "");
+        setEditClientEmail(client.email || "");
+        setEditClientRfc(client.rfc || "");
+        setEditClientPhone(client.phone || "");
+        setClientMessage("");
+    }
+    function toggleClientDetails(clientId: string) {
+        setExpandedClientIds((current) => {
+            const next = new Set(current);
+            if (next.has(clientId)) next.delete(clientId);
+            else next.add(clientId);
+            return next;
+        });
     }
     async function loadUserRole(activeSession: Session) {
         const { data } = await supabase.from("profiles").select("role").eq("id", activeSession.user.id).maybeSingle();
@@ -243,10 +276,25 @@ export default function Home() {
         const section = document.createElement("section"); section.id = "client-directory"; section.className = "table-card";
         const heading = document.createElement("div"); heading.className = "table-toolbar";
         const title = document.createElement("div"); const h2 = document.createElement("h2"); h2.textContent = "Clientes registrados"; const count = document.createElement("p"); count.textContent = `${clientDirectory.length} clientes activos`; title.append(h2, count); heading.append(title);
-        const tableWrap = document.createElement("div"); tableWrap.className = "table-wrap"; const table = document.createElement("table");
-        const header = document.createElement("thead"); const headerRow = document.createElement("tr"); ["ID cliente", "Cliente", "Sucursal", "Dirección", "Contacto", "E-mail", "RFC", "Teléfono"].forEach((label) => { const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell); }); header.append(headerRow); table.append(header);
-        const body = document.createElement("tbody"); clientDirectory.forEach((client) => { const row = document.createElement("tr"); [client.client_number.toString(), client.name, client.branch || dash, client.address || dash, client.contact_name || dash, client.email || dash, client.rfc || dash, client.phone || dash].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }); body.append(row); }); table.append(body); tableWrap.append(table); section.append(heading, tableWrap); form.append(section);
-    }, [view, clientDirectory]);
+        const tableWrap = document.createElement("div"); tableWrap.className = "table-wrap"; const table = document.createElement("table"); table.className = "client-table";
+        const header = document.createElement("thead"); const headerRow = document.createElement("tr"); ["ID cliente", "Cliente", "Sucursal", "Contacto", "Teléfono", "Modificar", "Detalles"].forEach((label) => { const cell = document.createElement("th"); cell.textContent = label; headerRow.append(cell); }); header.append(headerRow); table.append(header);
+        const body = document.createElement("tbody");
+        clientDirectory.forEach((client) => {
+            const row = document.createElement("tr"); row.className = "client-summary-row";
+            [client.client_number.toString(), client.name, client.branch || dash, client.contact_name || dash, client.phone || dash].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); });
+            const actionCell = document.createElement("td"); const editButton = document.createElement("button"); editButton.type = "button"; editButton.className = "parameter-edit-button"; editButton.textContent = "Modificar"; editButton.onclick = () => startEditingClient(client); actionCell.append(editButton); row.append(actionCell);
+            const detailActionCell = document.createElement("td"); const detailButton = document.createElement("button"); const isExpanded = expandedClientIds.has(client.id); detailButton.type = "button"; detailButton.className = "expand-samples client-expand-button"; detailButton.textContent = isExpanded ? "▲" : "▼"; detailButton.title = isExpanded ? "Ocultar detalles" : "Mostrar detalles"; detailButton.setAttribute("aria-label", detailButton.title); detailButton.onclick = () => toggleClientDetails(client.id); detailActionCell.append(detailButton); row.append(detailActionCell); body.append(row);
+            if (isExpanded) {
+                const detailRow = document.createElement("tr"); detailRow.className = "client-detail-row";
+                const detailCell = document.createElement("td"); detailCell.colSpan = 7;
+                const details = document.createElement("div"); details.className = "client-detail-grid";
+                const detailValues = [["Dirección", client.address || dash], ["Correo electrónico", client.email || dash], ["RFC", client.rfc || dash]];
+                detailValues.forEach(([label, value]) => { const item = document.createElement("div"); const caption = document.createElement("span"); caption.textContent = label; const content = document.createElement("strong"); content.textContent = value; item.append(caption, content); details.append(item); });
+                detailCell.append(details); detailRow.append(detailCell); body.append(detailRow);
+            }
+        });
+        table.append(body); tableWrap.append(table); section.append(heading, tableWrap); form.append(section);
+    }, [view, clientDirectory, expandedClientIds]);
     useEffect(() => {
         if (view !== "clients") return;
         const form = document.querySelector(".order-form");
@@ -362,9 +410,10 @@ export default function Home() {
             return { id, representative: samples[0], samples, analysis: analyses.length === 1 ? analyses[0] : "Varios análisis", sampleRange };
         }).filter((group) => group.samples.some((entry) => `${entry.op} ${entry.client} ${entry.sampleNumber} ${entry.samplingNumber} ${entry.analysis}`.toLowerCase().includes(query.toLowerCase())));
     }, [entries, query, showCancelled]);
-    const worksheetComplete = orderRows.length > 0 && orderRows.every((row) => row.uncertainty !== null && row.uncertainty !== "" && Boolean(row.result_value?.trim()) && Boolean(row.analyst_reference?.trim()) && Boolean(row.result_date) && Boolean(row.analyst_name?.trim()) && Boolean(row.released_by?.trim()));
+    const worksheetComplete = Boolean(sampledInput) && orderRows.length > 0 && orderRows.every((row) => row.uncertainty !== null && row.uncertainty !== "" && Boolean(row.result_value?.trim()) && Boolean(row.analyst_reference?.trim()) && Boolean(row.result_date) && Boolean(row.analyst_name?.trim()) && Boolean(row.released_by?.trim()));
+    const worksheetLocked = selected?.status === "informe_emitido" || Boolean(selected?.reportNumber || selected?.issuedAt);
     async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = authMode === "login" ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } }); setAuthMessage(result.error ? result.error.message : authMode === "login" ? "Acceso correcto." : "Cuenta creada. Revisa tu correo para confirmarla."); setAuthLoading(false); }
-    async function openSample(entry: Entry) { setSelected(entry); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
+    async function openSample(entry: Entry) { setSelected(entry); setExportConfirmOpen(false); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
         return; const { data } = await supabase.from("worksheet_results").select("id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []).map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]); }
     function openStaffSample(sample: StaffSample) {
         void openSample({ id: sample.order_id, op: dash, client: dash, samplingNumber: dash, sampler: dash, quotation: dash, received: formatDate(sample.received_at), due: formatDate(sample.due_date), reportNumber: "", analysis: dash, sampleNumber: sample.sample_code, sampleId: sample.sample_id, analysisOrderCreatedAt: sample.analysis_order_created_at, sampledAt: null, issuedAt: null, isCancelled: false });
@@ -381,16 +430,23 @@ export default function Home() {
         return; setSavingOrder(true); const dateResult = userRole === "analista" ? { error: null } : await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const results = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty === "" ? null : row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date || null, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); setSavingOrder(false); const error = dateResult.error || results.find((result) => result.error)?.error; if (error) {
         window.alert(`No se pudo guardar la orden: ${error.message}`);
         return;
-    } if (view === "samples") await loadStaffSamples(); else await loadEntries(); setSelected({ ...selected, sampledAt: sampledInput || null }); if (worksheetComplete && userRole !== "analista") {
-        await issueReportFromWorksheet();
-        return;
-    } window.alert("Orden de análisis guardada."); }
+    } if (view === "samples") await loadStaffSamples(); else await loadEntries(); setSelected({ ...selected, sampledAt: sampledInput || null }); window.alert("Orden de análisis guardada."); }
+    function requestReportExport() {
+        if (!worksheetComplete) {
+            window.alert("Hace falta llenar la OA completamente.");
+            return;
+        }
+        setExportConfirmOpen(true);
+    }
     async function issueReportFromWorksheet() { if (!selected || !worksheetComplete)
-        return; if (!window.confirm("¿Seguro que desea generar el informe? Esta acción emitirá el informe de la OP."))
-        return; const { error } = await supabase.rpc("issue_report", { p_order_id: selected.id, p_report_number: null, p_pdf_path: null }); if (error) {
+        return; setExportingReport(true); const dateResult = await supabase.from("analysis_orders").update({ sampled_at: sampledInput }).eq("id", selected.id); const resultUpdates = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); const saveError = dateResult.error || resultUpdates.find((result) => result.error)?.error; if (saveError) {
+        setExportingReport(false);
+        window.alert(`No se pudo guardar la orden: ${saveError.message}`);
+        return;
+    } const { error } = await supabase.rpc("issue_report", { p_order_id: selected.id, p_report_number: null, p_pdf_path: null }); setExportingReport(false); if (error) {
         window.alert(`No se pudo emitir el informe: ${error.message}`);
         return;
-    } window.alert("Informe emitido correctamente."); setSelected(null); await loadEntries(); }
+    } setExportConfirmOpen(false); window.alert("La orden de análisis se exportó a informe correctamente."); setSelected(null); await loadEntries(); }
     function openEmission(entry: Entry) { setEmissionEntry(entry); setReportInput(entry.reportNumber); setIssuedInput(entry.issuedAt || ""); }
     async function saveEmission(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); if (!emissionEntry)
         return; if (!reportInput.trim()) {
@@ -423,9 +479,84 @@ export default function Home() {
         setNewClientName(""); setNewClientBranch(""); setNewClientContact(""); setNewClientEmail(""); setNewClientPhone(""); setNewClientAddress(""); setNewClientRfc(""); setNewClientAttention("");
         await loadClientDirectory();
     }
+    function cancelEditingClient() {
+        setEditingClient(null);
+        setEditClientName("");
+        setEditClientBranch("");
+        setEditClientAddress("");
+        setEditClientContact("");
+        setEditClientEmail("");
+        setEditClientRfc("");
+        setEditClientPhone("");
+    }
+    async function updateClient(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!editingClient) return;
+        setClientEditSaving(true);
+        setClientMessage("");
+        const { error } = await supabase.from("clients").update({
+            name: editClientName.trim(),
+            branch: editClientBranch.trim() || null,
+            address: editClientAddress.trim() || null,
+            contact_name: editClientContact.trim() || null,
+            email: editClientEmail.trim() || null,
+            rfc: editClientRfc.trim() || null,
+            phone: editClientPhone.trim() || null,
+        }).eq("id", editingClient.id);
+        setClientEditSaving(false);
+        if (error) {
+            setClientMessage(error.code === "23505" ? "Ya existe un cliente con ese nombre." : `No se pudo modificar el cliente: ${error.message}`);
+            return;
+        }
+        cancelEditingClient();
+        setClientMessage("Cliente modificado correctamente.");
+        await loadClientDirectory();
+    }
     if (!authReady)
         return <main className="auth-page"><p>Conectando con LabAqua…</p></main>;
-    if (view === "clients") return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className="nav-item" onClick={() => setView("entries")}>Entrada de muestras</button><button className="nav-item active">Clientes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session?.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session?.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>Clientes</h1></div></header><form className="order-form" onSubmit={createClient}><section className="form-card"><h2>Alta de cliente</h2><p>Al guardar se asigna un número único de cliente para usar en nuevas OPs.</p><div className="form-grid"><label>Nombre o razón social<input required value={newClientName} onChange={(event) => setNewClientName(event.target.value)} /></label><label>Sucursal<input value={newClientBranch} onChange={(event) => setNewClientBranch(event.target.value)} placeholder="Ej. Planta norte" /></label><label>Dirección<input value={newClientAddress} onChange={(event) => setNewClientAddress(event.target.value)} /></label><label>Contacto<input value={newClientContact} onChange={(event) => setNewClientContact(event.target.value)} /></label><label>Atención a<input value={newClientAttention} onChange={(event) => setNewClientAttention(event.target.value)} /></label><label>Teléfono<input value={newClientPhone} onChange={(event) => setNewClientPhone(event.target.value)} /></label><label>Correo electrónico<input type="email" value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} /></label><label>RFC<input value={newClientRfc} onChange={(event) => setNewClientRfc(event.target.value)} /></label></div>{clientMessage && <p className="auth-message">{clientMessage}</p>}</section><div className="form-actions"><button type="button" className="button secondary" onClick={() => setView("entries")}>Cancelar</button><button className="button primary" disabled={clientSaving}>{clientSaving ? "Guardando…" : "Guardar cliente"}</button></div></form></section></main>;
+    if (view === "clients") return <main className="app-shell">
+        <aside className="sidebar">
+            <div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div>
+            <nav><button className="nav-item" onClick={() => setView("entries")}>Entrada de muestras</button><button className="nav-item active">Clientes</button></nav>
+            <button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session?.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session?.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button>
+        </aside>
+        <section className="workspace">
+            <header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>Clientes</h1></div></header>
+            <form className="order-form" onSubmit={createClient}>
+                <section className="form-card">
+                    <h2>Alta de cliente</h2><p>Al guardar se asigna un número único de cliente para usar en nuevas OPs.</p>
+                    <div className="form-grid">
+                        <label>Nombre o razón social<input required value={newClientName} onChange={(event) => setNewClientName(event.target.value)} /></label>
+                        <label>Sucursal<input value={newClientBranch} onChange={(event) => setNewClientBranch(event.target.value)} placeholder="Ej. Planta norte" /></label>
+                        <label>Dirección<input value={newClientAddress} onChange={(event) => setNewClientAddress(event.target.value)} /></label>
+                        <label>Contacto<input value={newClientContact} onChange={(event) => setNewClientContact(event.target.value)} /></label>
+                        <label>Teléfono<input value={newClientPhone} onChange={(event) => setNewClientPhone(event.target.value)} /></label>
+                        <label>Correo electrónico<input type="email" value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} /></label>
+                        <label>RFC<input value={newClientRfc} onChange={(event) => setNewClientRfc(event.target.value)} /></label>
+                    </div>
+                    {clientMessage && <p className="auth-message">{clientMessage}</p>}
+                </section>
+                <div className="form-actions"><button type="button" className="button secondary" onClick={() => setView("entries")}>Cancelar</button><button className="button primary" disabled={clientSaving}>{clientSaving ? "Guardando…" : "Guardar cliente"}</button></div>
+            </form>
+        </section>
+        {editingClient && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !clientEditSaving) cancelEditingClient(); }}>
+            <form className="modal parameter-edit-modal" onSubmit={updateClient}>
+                <button type="button" className="close" aria-label="Cerrar" disabled={clientEditSaving} onClick={cancelEditingClient}>×</button>
+                <h2>Modificar cliente</h2>
+                <p className="client-name">Cliente {editingClient.client_number}: {editingClient.name}</p>
+                <div className="parameter-edit-grid">
+                    <label>Nombre o razón social<input required value={editClientName} onChange={(event) => setEditClientName(event.target.value)} /></label>
+                    <label>Sucursal<input value={editClientBranch} onChange={(event) => setEditClientBranch(event.target.value)} /></label>
+                    <label>Dirección<input value={editClientAddress} onChange={(event) => setEditClientAddress(event.target.value)} /></label>
+                    <label>Contacto<input value={editClientContact} onChange={(event) => setEditClientContact(event.target.value)} /></label>
+                    <label>Teléfono<input value={editClientPhone} onChange={(event) => setEditClientPhone(event.target.value)} /></label>
+                    <label>Correo electrónico<input type="email" value={editClientEmail} onChange={(event) => setEditClientEmail(event.target.value)} /></label>
+                    <label>RFC<input value={editClientRfc} onChange={(event) => setEditClientRfc(event.target.value)} /></label>
+                </div>
+                <div className="form-actions"><button type="button" className="button secondary" disabled={clientEditSaving} onClick={cancelEditingClient}>Cancelar</button><button className="button primary" disabled={clientEditSaving}>{clientEditSaving ? "Guardando…" : "Guardar cambios"}</button></div>
+            </form>
+        </div>}
+    </main>;
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
     return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); setSelectedEntryIds(new Set()); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); setSelectedEntryIds(new Set()); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
@@ -472,5 +603,5 @@ export default function Home() {
         })}</tbody>
       </table></div>
     </section>}
-  </section>{selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button><p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div><label><span>Fecha de muestreo</span><input type="date" value={sampledInput} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}><input type="number" min="0" step="0.00001" value={row.uncertainty || ""} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/><div><strong>{row.label}</strong></div><input value={row.result_value || ""} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/><input maxLength={3} value={row.analyst_name || ""} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">Esta orden no tiene aún una plantilla de parámetros.</p>}<button className="button primary full" disabled={savingOrder} onClick={() => void saveAnalysisOrder()}>{savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 001"/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
+  </section>{selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button>{selected.analysisOrderCreatedAt && userRole !== "analista" && <button className="button primary oa-export-button" disabled={worksheetLocked || exportingReport} onClick={requestReportExport}>{worksheetLocked ? "Exportada a informe" : "Exportar a Informe"}</button>}<p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div><label><span>Fecha de muestreo</span><input type="date" value={sampledInput} disabled={worksheetLocked} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}><input type="number" min="0" step="0.00001" value={row.uncertainty || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/><div><strong>{row.label}</strong></div><input value={row.result_value || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/><input maxLength={3} value={row.analyst_name || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">Esta orden no tiene aún una plantilla de parámetros.</p>}<button className="button primary full" disabled={savingOrder || worksheetLocked} onClick={() => void saveAnalysisOrder()}>{worksheetLocked ? "Orden exportada a informe" : savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{exportConfirmOpen && <div className="modal-backdrop export-confirm-backdrop" onClick={() => !exportingReport && setExportConfirmOpen(false)}><section className="modal export-confirm-modal" onClick={(event) => event.stopPropagation()}><p className="eyebrow">EXPORTAR A INFORME</p><h2>Confirmar exportación</h2><p className="export-warning">La orden de análisis se exportará a un formato de informe. Ya no podrán modificarse los valores a menos que se comience un proceso de corrección de informe.</p><p className="export-question">¿Está seguro de que quiere exportar a informe?</p><div className="export-confirm-actions"><button className="button secondary" disabled={exportingReport} onClick={() => setExportConfirmOpen(false)}>Cancelar</button><button className="button primary" disabled={exportingReport} onClick={() => void issueReportFromWorksheet()}>{exportingReport ? "Exportando…" : "Sí, exportar a informe"}</button></div></section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 001"/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
 }
