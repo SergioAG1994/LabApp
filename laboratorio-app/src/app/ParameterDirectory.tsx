@@ -11,7 +11,7 @@ type ParameterRecord = {
   method_reference: string | null;
 };
 
-export function ParameterDirectory({ canCreate }: { canCreate: boolean }) {
+export function ParameterDirectory({ canCreate, mode }: { canCreate: boolean; mode: "list" | "create" }) {
   const [parameters, setParameters] = useState<ParameterRecord[]>([]);
   const [shortName, setShortName] = useState("");
   const [formalName, setFormalName] = useState("");
@@ -25,6 +25,8 @@ export function ParameterDirectory({ canCreate }: { canCreate: boolean }) {
   const [editUnit, setEditUnit] = useState("");
   const [editMethod, setEditMethod] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [deactivatingId, setDeactivatingId] = useState<string | null>(null);
 
   async function loadParameters() {
     const { data, error } = await supabase
@@ -43,6 +45,13 @@ export function ParameterDirectory({ canCreate }: { canCreate: boolean }) {
     const timer = window.setTimeout(() => { void loadParameters(); }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!openActionMenuId) return;
+    const closeMenu = () => setOpenActionMenuId(null);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [openActionMenuId]);
 
   async function createParameter(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -108,8 +117,24 @@ export function ParameterDirectory({ canCreate }: { canCreate: boolean }) {
     await loadParameters();
   }
 
+  async function deactivateParameter(parameter: ParameterRecord) {
+    setOpenActionMenuId(null);
+    const confirmed = window.confirm(`¿Seguro que deseas desactivar el parámetro “${parameter.par_form || parameter.name}”?\n\nYa no estará disponible para nuevas OAs, pero se conservará en los registros históricos.`);
+    if (!confirmed) return;
+    setMessage("");
+    setDeactivatingId(parameter.id);
+    const { error } = await supabase.from("parameters").update({ active: false }).eq("id", parameter.id);
+    setDeactivatingId(null);
+    if (error) {
+      setMessage(`No se pudo desactivar el parámetro: ${error.message}`);
+      return;
+    }
+    setMessage(`El parámetro ${parameter.par_form || parameter.name} fue desactivado.`);
+    await loadParameters();
+  }
+
   return <div className="parameter-directory">
-    {canCreate && <form className="form-card parameter-create-form" onSubmit={createParameter}>
+    {canCreate && mode === "create" && <form className="form-card parameter-create-form" onSubmit={createParameter}>
       <h2>Alta de parámetro</h2>
       <p>El parámetro quedará disponible para paquetes, multipaquetes y nuevas OAs.</p>
       <div className="form-grid">
@@ -121,14 +146,14 @@ export function ParameterDirectory({ canCreate }: { canCreate: boolean }) {
       <div className="form-actions"><button className="button primary" disabled={saving}>{saving ? "Guardando…" : "Guardar parámetro"}</button></div>
     </form>}
     {message && <p className="auth-message">{message}</p>}
-    <section className="table-card">
+    {mode === "list" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Parámetros registrados</h2><p>{parameters.length} parámetros activos</p></div></div>
       <div className="table-wrap"><table className="parameter-table">
         <thead><tr><th>Nombre corto</th><th>Nombre formal</th><th>Unidades</th><th>Método</th>{canCreate && <th>Acciones</th>}</tr></thead>
-        <tbody>{parameters.map((parameter) => <tr key={parameter.id}><td><strong>{parameter.name}</strong></td><td>{parameter.par_form || "—"}</td><td>{parameter.unit || "—"}</td><td>{parameter.method_reference || "—"}</td>{canCreate && <td><button type="button" className="parameter-edit-button" onClick={() => startEditing(parameter)}>Modificar</button></td>}</tr>)}</tbody>
+        <tbody>{parameters.map((parameter) => <tr key={parameter.id}><td><strong>{parameter.name}</strong></td><td>{parameter.par_form || "—"}</td><td>{parameter.unit || "—"}</td><td>{parameter.method_reference || "—"}</td>{canCreate && <td><div className="parameter-actions" onClick={(event) => event.stopPropagation()}><button type="button" className="parameter-actions-trigger" aria-label={`Acciones para ${parameter.name}`} aria-haspopup="menu" aria-expanded={openActionMenuId === parameter.id} disabled={deactivatingId === parameter.id} onClick={() => setOpenActionMenuId((current) => current === parameter.id ? null : parameter.id)}>{deactivatingId === parameter.id ? "…" : "⋮"}</button>{openActionMenuId === parameter.id && <div className="parameter-actions-menu" role="menu"><button type="button" role="menuitem" onClick={() => { setOpenActionMenuId(null); startEditing(parameter); }}>Modificar</button><button type="button" role="menuitem" className="parameter-deactivate-action" onClick={() => void deactivateParameter(parameter)}>Desactivar</button></div>}</div></td>}</tr>)}</tbody>
       </table></div>
-    </section>
-    {editing && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !editSaving) cancelEditing(); }}>
+    </section>}
+    {mode === "list" && editing && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !editSaving) cancelEditing(); }}>
       <form className="modal parameter-edit-modal" onSubmit={updateParameter}>
         <button type="button" className="close" aria-label="Cerrar" disabled={editSaving} onClick={cancelEditing}>×</button>
         <h2>Modificar parámetro</h2>
