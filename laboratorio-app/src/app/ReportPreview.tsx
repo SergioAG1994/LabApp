@@ -44,6 +44,7 @@ type Props = {
   onClose: () => void;
   onContinue: () => void;
   userId: string;
+  readOnly?: boolean;
 };
 
 type SubsampleResults = Record<string, string[]>;
@@ -65,7 +66,7 @@ function numericDate(value: Date) {
   return new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "2-digit", year: "numeric" }).format(value);
 }
 
-export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClose, onContinue, userId }: Props) {
+export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClose, onContinue, userId, readOnly = false }: Props) {
   const laboratorySampled = !["N/A", "—"].includes(entry.samplingNumber.trim().toUpperCase());
   const eligibleRows = useMemo(() => rows.filter((row) => eligibleSubsampleParameter(row.label)), [rows]);
   const [sampleInformation, setSampleInformation] = useState("");
@@ -214,11 +215,11 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
   const sampleDetails = <table className="report-sample-info-table">
     <thead><tr><th>Información de la muestra</th><th>Observaciones</th></tr></thead>
     <tbody><tr>
-      <td><textarea className="report-sample-info-input" aria-label="Información de la muestra" value={sampleInformation} onChange={(event) => setSampleInformation(event.target.value)} placeholder="Capture la descripción, condiciones de recepción y demás información registrada en la bitácora física." /></td>
+      <td><textarea className="report-sample-info-input" aria-label="Información de la muestra" value={sampleInformation} onChange={(event) => setSampleInformation(event.target.value)} placeholder="Capture la descripción, condiciones de recepción y demás información registrada en la bitácora física." disabled={readOnly} /></td>
       <td className="report-observation-cell">
         <p>{FIXED_OBSERVATION}.</p>
         <p><b>Norma de muestreo:</b> {laboratorySampled ? "NMX-AA-003-1980" : "No aplica"}</p>
-        <label><b>Fecha de muestreo:</b> {laboratorySampled ? <input type="date" value={draftSampledAt} onChange={(event) => setDraftSampledAt(event.target.value)} /> : <span>No aplica</span>}</label>
+        <label><b>Fecha de muestreo:</b> {laboratorySampled ? <input type="date" value={draftSampledAt} onChange={(event) => setDraftSampledAt(event.target.value)} disabled={readOnly} /> : <span>No aplica</span>}</label>
         <p><b>Responsable del muestreo:</b> {laboratorySampled ? entry.sampler : "El cliente"}</p>
       </td>
     </tr></tbody>
@@ -231,11 +232,12 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
       <header className="report-preview-toolbar">
         <div><strong>Pre-informe</strong><span>Vista previa editable · todavía no es el PDF final</span></div>
         <div className="report-preview-actions">
-          <button className="button secondary" disabled={saving} onClick={() => void saveDraft()}>{saving ? "Guardando…" : "Guardar borrador"}</button>
-          <button className="button primary" disabled={saving} onClick={() => void continueToConfirmation()}>Continuar a emisión</button>
+          {!readOnly && <button className="button secondary" disabled={saving} onClick={() => void saveDraft()}>{saving ? "Guardando…" : "Guardar borrador"}</button>}
+          {!readOnly && <button className="button primary" disabled={saving} onClick={() => void continueToConfirmation()}>Continuar a emisión</button>}
           <button className="report-preview-close" aria-label="Cerrar pre-informe" onClick={onClose}>×</button>
         </div>
       </header>
+      {readOnly && <div className="report-preview-message" role="status">Informe emitido · vista de solo lectura.</div>}
       {message && <div className="report-preview-message" role="status">{message}</div>}
       <main className="report-preview-canvas">
         <section className="report-page report-first-page" ref={firstPageRef}>
@@ -253,7 +255,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
             <div className="report-metadata-box"><div><b>Número de informe:</b><span>BORRADOR</span></div><div><b>Fecha de informe:</b><span>{numericDate(new Date())}</span></div><div><b>Fecha recepción de muestra:</b><span>{entry.received}</span></div></div>
             <div className="report-metadata-box report-references"><strong>Referencias</strong><div><b>OP:</b><span>{entry.op}</span></div><div><b>No. muestra:</b><span>{entry.sampleNumber}</span></div><div><b>Cotización:</b><span>{entry.quotation && entry.quotation !== "—" ? entry.quotation : "N/A"}</span></div><div><b>Muestreo:</b><span>{entry.samplingNumber && entry.samplingNumber !== "—" ? entry.samplingNumber : "N/A"}</span></div></div>
           </div>
-          <div className="report-sample-fields"><label><b>Identificación de la muestra:</b><input value={sampleIdentification} onChange={(event) => setSampleIdentification(event.target.value)} placeholder="Captura manual" /></label><label><b>Solicita:</b><input value={requestedBy} onChange={(event) => setRequestedBy(event.target.value)} placeholder="Nombre de quien solicita" /></label></div>
+          <div className="report-sample-fields"><label><b>Identificación de la muestra:</b><input value={sampleIdentification} onChange={(event) => setSampleIdentification(event.target.value)} placeholder="Captura manual" disabled={readOnly} /></label><label><b>Solicita:</b><input value={requestedBy} onChange={(event) => setRequestedBy(event.target.value)} placeholder="Nombre de quien solicita" disabled={readOnly} /></label></div>
           <h3>Resultados de análisis</h3>
           </div>
           <ResultsTable rows={firstPageRows} />
@@ -275,9 +277,9 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
         <section className="report-page">
           <ReportHeader page={informationPage} totalPages={totalPages} reportNumber={entry.reportNumber} />
           {!packSampleDetailsAfterResults && sampleDetails}
-          {eligibleRows.length > 0 && <><div className="subsample-heading"><h3>Resultados de muestras simples</h3><label>Cantidad de submuestras <select value={subsampleCount} onChange={(event) => setSubsampleCount(Number(event.target.value) as 4 | 6)}><option value={4}>4</option><option value={6}>6</option></select></label></div>
+          {eligibleRows.length > 0 && <><div className="subsample-heading"><h3>Resultados de muestras simples</h3><label>Cantidad de submuestras <select value={subsampleCount} onChange={(event) => setSubsampleCount(Number(event.target.value) as 4 | 6)} disabled={readOnly}><option value={4}>4</option><option value={6}>6</option></select></label></div>
             <table className="report-table subsample-table"><thead><tr><th>No. de muestra</th>{eligibleRows.map((row) => <th key={row.id}>{row.par_form || row.label}<small>{row.unit || ""}</small></th>)}</tr></thead><tbody>
-              {Array.from({ length: subsampleCount }, (_, index) => <tr key={index}><td>{entry.sampleNumber}-{index + 1}</td>{eligibleRows.map((row) => <td key={row.id}><input aria-label={`${row.label}, submuestra ${index + 1}`} value={subsampleResults[row.id]?.[index] || ""} onChange={(event) => setSubsampleValue(row.id, index, event.target.value)} placeholder="Resultado" /></td>)}</tr>)}
+              {Array.from({ length: subsampleCount }, (_, index) => <tr key={index}><td>{entry.sampleNumber}-{index + 1}</td>{eligibleRows.map((row) => <td key={row.id}><input aria-label={`${row.label}, submuestra ${index + 1}`} value={subsampleResults[row.id]?.[index] || ""} onChange={(event) => setSubsampleValue(row.id, index, event.target.value)} placeholder="Resultado" disabled={readOnly} /></td>)}</tr>)}
             </tbody></table></>}
           <h3>Personal responsable</h3>
           <table className="report-table responsible-table"><thead><tr><th>Responsable</th><th>Participación</th><th>Referencia</th></tr></thead><tbody>

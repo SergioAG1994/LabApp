@@ -74,6 +74,15 @@ type StaffSample = {
     captured_results: number;
     completion_percent: number;
 };
+type IssuedReport = {
+    orderId: string;
+    reportNumber: string;
+    client: string;
+    clientBranch: string | null | undefined;
+    analysis: string;
+    issuedAt: string;
+    entry: Entry;
+};
 const dash = "—";
 const reactSidebarEnabled = true;
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value.slice(0, 10)}T12:00:00`)) : dash;
@@ -89,7 +98,7 @@ export default function Home() {
     const [fullName, setFullName] = useState("");
     const [authMessage, setAuthMessage] = useState("");
     const [authLoading, setAuthLoading] = useState(false);
-    const [view, setView] = useState<"entries" | "new" | "clients" | "samples" | "parameters" | "personnel">("entries");
+    const [view, setView] = useState<"entries" | "new" | "clients" | "samples" | "parameters" | "personnel" | "reports">("entries");
     const [userRole, setUserRole] = useState<AppRole | null>(null);
     const [entries, setEntries] = useState<Entry[]>([]);
     const [query, setQuery] = useState("");
@@ -103,6 +112,7 @@ export default function Home() {
     const [savingOrder, setSavingOrder] = useState(false);
     const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
     const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
+    const [reportListPreview, setReportListPreview] = useState(false);
     const [exportingReport, setExportingReport] = useState(false);
     const [generatingOrder, setGeneratingOrder] = useState(false);
     const orderTableRef = useRef<HTMLDivElement>(null);
@@ -143,6 +153,8 @@ export default function Home() {
     const [personnelDirectoryMode, setPersonnelDirectoryMode] = useState<"list" | "create">("list");
     const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
     const [sampleQuery, setSampleQuery] = useState("");
+    const [reportQuery, setReportQuery] = useState("");
+    const [reportYear, setReportYear] = useState("all");
     async function loadEntries() {
         const { data, error } = await supabase.from("analysis_orders").select("id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name, branch, address, rfc, phone, contact_name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_label, analysis_packages(code, name))").order("created_at", { ascending: false });
         if (error || !data)
@@ -433,7 +445,9 @@ export default function Home() {
         if (personnelSubnavVisible && (userRole === "administrador" || userRole === "recepcion")) items.push(makeButton("↳   Alta de personal", view === "personnel" && personnelDirectoryMode === "create" ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
             setView("personnel"); setPersonnelDirectoryMode("create"); setShowCancelled(false);
         }));
-        items.push(makeButton("◫   Informes", "nav-item muted"));
+        if (userRole !== "analista") items.push(makeButton("◫   Informes", view === "reports" ? "nav-item active" : "nav-item", () => {
+            setView("reports"); setShowCancelled(false);
+        }));
         items.push(makeButton("▥   Reportes", "nav-item muted"));
         menu.append(...items);
         nav.append(menu);
@@ -443,9 +457,9 @@ export default function Home() {
         };
     }, [session, userRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode]);
     useEffect(() => {
-        if (view !== "samples" && view !== "parameters" && view !== "personnel") return;
+        if (view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "reports") return;
         const title = document.querySelector(".topbar h1");
-        if (title) title.textContent = view === "samples" ? "Muestras" : view === "parameters" ? "Parámetros" : "Personal";
+        if (title) title.textContent = view === "samples" ? "Muestras" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : "Informes";
     }, [view]);
     const visibleOrderGroups = useMemo(() => {
         const groups = new Map<string, Entry[]>();
@@ -474,10 +488,39 @@ export default function Home() {
         if (!normalizedQuery) return staffSamples;
         return staffSamples.filter((sample) => sample.sample_code.toLocaleLowerCase("es-MX").includes(normalizedQuery));
     }, [staffSamples, sampleQuery]);
+    const issuedReports = useMemo(() => {
+        const groups = new Map<string, Entry[]>();
+        entries.filter((entry) => Boolean(entry.reportNumber) && Boolean(entry.issuedAt) && !entry.isCancelled).forEach((entry) => {
+            groups.set(entry.id, [...(groups.get(entry.id) || []), entry]);
+        });
+        return [...groups.entries()].map(([orderId, reportEntries]): IssuedReport => {
+            const representative = reportEntries[0];
+            const analyses = [...new Set(reportEntries.map((entry) => entry.analysis))];
+            return {
+                orderId,
+                reportNumber: representative.reportNumber,
+                client: representative.client,
+                clientBranch: representative.clientBranch,
+                analysis: analyses.length === 1 ? analyses[0] : "Varios análisis",
+                issuedAt: representative.issuedAt || "",
+                entry: representative,
+            };
+        }).sort((a, b) => b.issuedAt.localeCompare(a.issuedAt) || b.reportNumber.localeCompare(a.reportNumber));
+    }, [entries]);
+    const reportYears = useMemo(() => [...new Set(issuedReports.map((report) => report.issuedAt.slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a)), [issuedReports]);
+    const visibleReports = useMemo(() => {
+        const normalizedQuery = reportQuery.trim().toLocaleLowerCase("es-MX");
+        return issuedReports.filter((report) => (reportYear === "all" || report.issuedAt.startsWith(reportYear)) && (!normalizedQuery || `${report.reportNumber} ${report.client} ${report.clientBranch || ""} ${report.analysis}`.toLocaleLowerCase("es-MX").includes(normalizedQuery)));
+    }, [issuedReports, reportQuery, reportYear]);
     const worksheetLocked = selected?.status === "informe_emitido" || Boolean(selected?.reportNumber || selected?.issuedAt);
     async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = authMode === "login" ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } }); setAuthMessage(result.error ? result.error.message : authMode === "login" ? "Acceso correcto." : "Cuenta creada. Revisa tu correo para confirmarla."); setAuthLoading(false); }
-    async function openSample(entry: Entry) { setSelected(entry); setExportConfirmOpen(false); setReportPreviewOpen(false); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
+    async function openSample(entry: Entry) { setSelected(entry); setExportConfirmOpen(false); setReportPreviewOpen(false); setReportListPreview(false); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
         return; const { data } = await supabase.from("worksheet_results").select("id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order, par_form, method_reference").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []).map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]); }
+    async function openIssuedReport(report: IssuedReport) {
+        await openSample(report.entry);
+        setReportListPreview(true);
+        setReportPreviewOpen(true);
+    }
     function openStaffSample(sample: StaffSample) {
         void openSample({ id: sample.order_id, op: dash, client: dash, samplingNumber: dash, sampler: dash, quotation: dash, received: formatDate(sample.received_at), due: formatDate(sample.due_date), reportNumber: "", analysis: dash, sampleNumber: sample.sample_code, sampleId: sample.sample_id, analysisOrderCreatedAt: sample.analysis_order_created_at, sampledAt: null, issuedAt: null, isCancelled: false });
     }
@@ -588,6 +631,82 @@ export default function Home() {
         setClientMessage("Cliente modificado correctamente.");
         await loadClientDirectory();
     }
+    useEffect(() => {
+        const descriptions: Record<string, string> = {
+            "Entrada de muestras": "Abre el registro de OPs y muestras recibidas.",
+            "OPs eliminados": "Muestra las OPs eliminadas para restaurarlas o borrarlas definitivamente.",
+            "Clientes": "Abre la consulta y administración de clientes.",
+            "Muestras": "Muestra las muestras disponibles para el personal analista.",
+            "Informes": "Accede a los informes emitidos del laboratorio.",
+            "Reportes": "Accede a los reportes del laboratorio.",
+            "Nueva OP": "Abre el formulario para registrar una nueva OP.",
+            "＋ Alta de OP": "Abre el formulario para registrar una nueva OP.",
+            "Cancelar": "Cancela esta acción sin guardar cambios.",
+            "Guardar cliente": "Guarda el nuevo cliente y asigna su identificador.",
+            "Guardar parámetro": "Guarda el nuevo parámetro para usarlo en análisis futuros.",
+            "Guardar integrante": "Guarda el nuevo integrante del personal del laboratorio.",
+            "Guardar cambios": "Guarda las modificaciones realizadas.",
+            "Guardar orden de análisis": "Guarda los resultados y datos capturados en esta orden de análisis.",
+            "Generar orden de análisis": "Genera la orden de análisis para esta muestra.",
+            "Exportar a Informe": "Valida la orden y prepara su exportación al informe.",
+            "Guardar borrador": "Guarda los cambios del pre-informe sin emitirlo.",
+            "Continuar a emisión": "Valida el pre-informe y avanza a confirmar su emisión.",
+            "Ver informe": "Abre este informe emitido en modo de solo lectura.",
+            "Sí, exportar a informe": "Confirma la exportación de la orden al informe.",
+            "Registrar OP": "Registra la OP y todas sus muestras configuradas.",
+            "Registrar entrada": "Registra la OP y su muestra de entrada.",
+            "Guardar multipaquete": "Guarda esta plantilla reutilizable de muestras y parámetros.",
+            "Volver": "Regresa a la configuración de la OP sin guardar este multipaquete.",
+            "Modificar": "Abre la edición de la información seleccionada.",
+            "Desactivar": "Desactiva este registro para impedir su uso futuro, sin borrar su historial.",
+            "Reactivar": "Vuelve a activar este integrante para uso futuro.",
+            "Eliminar OP": "Envía esta OP a la lista de OPs eliminadas.",
+            "Restaurar OP": "Restaura esta OP al registro de entrada de muestras.",
+            "Eliminar definitivamente": "Elimina esta OP de forma permanente. Esta acción no se puede deshacer.",
+            "Ingresar": "Inicia sesión en el sistema.",
+            "Crear cuenta": "Crea una cuenta para acceder al sistema.",
+            "¿No tienes cuenta? Crear cuenta": "Cambia al formulario para crear una cuenta.",
+            "¿Ya tienes cuenta? Iniciar sesión": "Cambia al formulario para iniciar sesión.",
+        };
+        const setTooltip = (button: HTMLButtonElement) => {
+            if (button.dataset.tooltip && button.dataset.tooltipAuto !== "true") return;
+            const visibleText = (button.textContent || "").replace(/[▦▤▣◫▥↳＋⋮▼▲×…]/g, "").replace(/\s+/g, " ").trim();
+            const ariaLabel = button.getAttribute("aria-label") || "";
+            let tooltip = descriptions[visibleText] || "";
+            if (!tooltip && button.classList.contains("user-card")) tooltip = "Abre las opciones de usuario y permite cerrar sesión.";
+            if (!tooltip && button.classList.contains("close")) tooltip = "Cierra esta ventana sin guardar cambios.";
+            if (!tooltip && button.classList.contains("report-preview-close")) tooltip = "Cierra el pre-informe y regresa a la orden de análisis.";
+            if (!tooltip && button.classList.contains("parameter-actions-trigger")) tooltip = ariaLabel || "Muestra las acciones disponibles para este registro.";
+            if (!tooltip && button.classList.contains("expand-samples") || !tooltip && button.classList.contains("client-expand-button")) tooltip = ariaLabel || "Muestra u oculta la información adicional.";
+            if (!tooltip && button.classList.contains("sample-link")) tooltip = "Abre la orden de análisis de esta muestra.";
+            if (!tooltip && button.classList.contains("emission-link")) tooltip = "Abre la información de emisión de este informe.";
+            if (!tooltip) tooltip = ariaLabel || (visibleText ? `Ejecuta la acción: ${visibleText}.` : "Ejecuta esta acción.");
+            const shortTooltip = tooltip.split(/\s+/).slice(0, 25).join(" ");
+            button.dataset.tooltip = shortTooltip;
+            button.dataset.tooltipAuto = "true";
+            button.title = shortTooltip;
+        };
+        const applyTooltips = (root: ParentNode = document) => root.querySelectorAll<HTMLButtonElement>("button").forEach(setTooltip);
+        applyTooltips();
+        const observer = new MutationObserver((records) => {
+            records.forEach((record) => {
+                if (record.type === "attributes" && record.target instanceof HTMLButtonElement) {
+                    setTooltip(record.target);
+                    return;
+                }
+                record.addedNodes.forEach((node) => {
+                    if (!(node instanceof HTMLElement)) return;
+                    if (node instanceof HTMLButtonElement) setTooltip(node);
+                    applyTooltips(node);
+                });
+                if (record.type === "characterData" && record.target.parentElement?.closest("button") instanceof HTMLButtonElement) {
+                    setTooltip(record.target.parentElement.closest("button") as HTMLButtonElement);
+                }
+            });
+        });
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["aria-label"] });
+        return () => observer.disconnect();
+    }, []);
     if (!authReady)
         return <main className="auth-page"><p>Conectando con LabAqua…</p></main>;
     if (view === "clients") return <main className="app-shell">
@@ -635,14 +754,18 @@ export default function Home() {
     </main>;
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
-    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
+    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
     {view === "samples" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Muestras</h2><p>{visibleStaffSamples.length} muestras encontradas</p></div><input type="search" value={sampleQuery} onChange={(event) => setSampleQuery(event.target.value)} placeholder="Buscar número de muestra" aria-label="Buscar por número de muestra" /></div>
       <div className="table-wrap"><table className="intake-table" style={{ width: "820px", minWidth: "820px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={4}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras disponibles."}</td></tr> : visibleStaffSamples.map((sample) => <tr key={sample.sample_id}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
     </section>}
+    {view === "reports" && <section className="table-card report-directory">
+      <div className="table-toolbar report-toolbar"><div><h2>Informes emitidos</h2><p>{visibleReports.length} de {issuedReports.length} informes mostrados</p></div><div className="report-filters"><select value={reportYear} onChange={(event) => setReportYear(event.target.value)} aria-label="Filtrar informes por año"><option value="all">Todos los años</option>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select><input type="search" value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar informe o cliente" aria-label="Buscar informe o cliente" /></div></div>
+      <div className="table-wrap"><table className="report-directory-table"><thead><tr><th>Número de informe</th><th>Cliente</th><th>Tipo de análisis</th><th>Fecha de emisión</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleReports.length === 0 ? <tr><td colSpan={6}>{reportQuery.trim() || reportYear !== "all" ? "No se encontraron informes con esos filtros." : "Aún no hay informes emitidos."}</td></tr> : visibleReports.map((report) => <tr key={report.orderId}><td><strong>{report.reportNumber}</strong></td><td><strong>{report.client}</strong>{report.clientBranch && <span>{report.clientBranch}</span>}</td><td>{report.analysis}</td><td>{formatDate(report.issuedAt)}</td><td><span className="status status-green">Emitido</span></td><td><button type="button" className="button secondary report-view-button" onClick={() => void openIssuedReport(report)}>Ver informe</button></td></tr>)}</tbody></table></div>
+    </section>}
     {view === "parameters" && <ParameterDirectory canCreate={userRole === "administrador" || userRole === "recepcion"} mode={parameterDirectoryMode} />}
     {view === "personnel" && <PersonnelDirectory canManage={userRole === "administrador" || userRole === "recepcion"} mode={personnelDirectoryMode} userId={session.user.id} />}
-    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && <section className="table-card">
+    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "reports" && <section className="table-card">
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
         <input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/>
@@ -678,5 +801,5 @@ export default function Home() {
         })}</tbody>
       </table></div>
     </section>}
-  </section>{selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button>{selected.analysisOrderCreatedAt && userRole !== "analista" && <button className="button primary oa-export-button" disabled={worksheetLocked || exportingReport} onClick={requestReportExport}>{worksheetLocked ? "Exportada a informe" : "Exportar a Informe"}</button>}<p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div><label><span>Fecha de muestreo</span><input type="date" value={sampledInput} disabled={worksheetLocked || !laboratorySampled} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}><input type="number" min="0" step="0.00001" value={row.uncertainty || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/><div><strong>{row.label}</strong></div><input value={row.result_value || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/><input maxLength={3} value={row.analyst_name || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">Esta orden no tiene aún una plantilla de parámetros.</p>}<button className="button primary full" disabled={savingOrder || worksheetLocked} onClick={() => void saveAnalysisOrder()}>{worksheetLocked ? "Orden exportada a informe" : savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{selected && reportPreviewOpen && <ReportPreview entry={selected} rows={orderRows} sampledAt={sampledInput} onSampledAtChange={setSampledInput} onClose={() => setReportPreviewOpen(false)} onContinue={() => setExportConfirmOpen(true)} userId={session.user.id}/>} {exportConfirmOpen && <div className="modal-backdrop export-confirm-backdrop" onClick={() => !exportingReport && setExportConfirmOpen(false)}><section className="modal export-confirm-modal" onClick={(event) => event.stopPropagation()}><p className="eyebrow">EXPORTAR A INFORME</p><h2>Confirmar exportación</h2><p className="export-warning">La orden de análisis se exportará a un formato de informe. Ya no podrán modificarse los valores a menos que se comience un proceso de corrección de informe.</p><p className="export-question">¿Está seguro de que quiere exportar a informe?</p><div className="export-confirm-actions"><button className="button secondary" disabled={exportingReport} onClick={() => setExportConfirmOpen(false)}>Cancelar</button><button className="button primary" disabled={exportingReport} onClick={() => void issueReportFromWorksheet()}>{exportingReport ? "Exportando…" : "Sí, exportar a informe"}</button></div></section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 0001" maxLength={4}/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
+  </section>{selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button>{selected.analysisOrderCreatedAt && userRole !== "analista" && <button className="button primary oa-export-button" disabled={worksheetLocked || exportingReport} onClick={requestReportExport}>{worksheetLocked ? "Exportada a informe" : "Exportar a Informe"}</button>}<p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div><label><span>Fecha de muestreo</span><input type="date" value={sampledInput} disabled={worksheetLocked || !laboratorySampled} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}><input type="number" min="0" step="0.00001" value={row.uncertainty || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/><div><strong>{row.label}</strong></div><input value={row.result_value || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/><input maxLength={3} value={row.analyst_name || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">Esta orden no tiene aún una plantilla de parámetros.</p>}<button className="button primary full" disabled={savingOrder || worksheetLocked} onClick={() => void saveAnalysisOrder()}>{worksheetLocked ? "Orden exportada a informe" : savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{selected && reportPreviewOpen && <ReportPreview entry={selected} rows={orderRows} sampledAt={sampledInput} onSampledAtChange={setSampledInput} onClose={() => { setReportPreviewOpen(false); if (reportListPreview) setSelected(null); setReportListPreview(false); }} onContinue={() => setExportConfirmOpen(true)} userId={session.user.id} readOnly={selected.status === "informe_emitido"}/>} {exportConfirmOpen && <div className="modal-backdrop export-confirm-backdrop" onClick={() => !exportingReport && setExportConfirmOpen(false)}><section className="modal export-confirm-modal" onClick={(event) => event.stopPropagation()}><p className="eyebrow">EXPORTAR A INFORME</p><h2>Confirmar exportación</h2><p className="export-warning">La orden de análisis se exportará a un formato de informe. Ya no podrán modificarse los valores a menos que se comience un proceso de corrección de informe.</p><p className="export-question">¿Está seguro de que quiere exportar a informe?</p><div className="export-confirm-actions"><button className="button secondary" disabled={exportingReport} onClick={() => setExportConfirmOpen(false)}>Cancelar</button><button className="button primary" disabled={exportingReport} onClick={() => void issueReportFromWorksheet()}>{exportingReport ? "Exportando…" : "Sí, exportar a informe"}</button></div></section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 0001" maxLength={4}/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
 }
