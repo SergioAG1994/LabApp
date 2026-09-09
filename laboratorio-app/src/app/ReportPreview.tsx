@@ -36,6 +36,20 @@ type PreviewRow = {
   method_reference: string | null;
 };
 
+type LaboratoryStaff = {
+  id: string;
+  full_name: string;
+  initials: string;
+  active: boolean;
+};
+
+type ResponsiblePerson = {
+  key: string;
+  fullName: string;
+  initials: string;
+  roles: string[];
+};
+
 type Props = {
   entry: PreviewEntry;
   rows: PreviewRow[];
@@ -79,6 +93,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [resultPages, setResultPages] = useState<PreviewRow[][]>(() => [rows]);
+  const [laboratoryStaff, setLaboratoryStaff] = useState<LaboratoryStaff[]>([]);
   const firstPageRef = useRef<HTMLElement>(null);
   const firstPageFixedRef = useRef<HTMLDivElement>(null);
   const rowMeasurementRef = useRef<HTMLDivElement>(null);
@@ -106,7 +121,44 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
     return () => { active = false; };
   }, [entry.clientContact, entry.sampleId, sampledAt]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadLaboratoryStaff() {
+      const { data } = await supabase
+        .from("laboratory_staff")
+        .select("id, full_name, initials, active")
+        .eq("active", true)
+        .order("full_name");
+      if (active) setLaboratoryStaff((data || []) as LaboratoryStaff[]);
+    }
+    void loadLaboratoryStaff();
+    return () => { active = false; };
+  }, []);
+
   const analysts = useMemo(() => [...new Set(rows.map((row) => row.analyst_name?.trim()).filter(Boolean) as string[])], [rows]);
+  const responsiblePeople = useMemo(() => {
+    const people = new Map<string, ResponsiblePerson>();
+    const findStaff = (reference: string) => {
+      const normalizedReference = reference.trim().toLocaleUpperCase();
+      return laboratoryStaff.find((person) => person.initials.trim().toLocaleUpperCase() === normalizedReference)
+        || laboratoryStaff.find((person) => person.full_name.trim().toLocaleLowerCase() === reference.trim().toLocaleLowerCase());
+    };
+    const addPerson = (reference: string, role: string) => {
+      const staffMember = findStaff(reference);
+      const fullName = staffMember?.full_name || reference;
+      const initials = staffMember?.initials || reference;
+      const key = staffMember?.id || `${fullName}-${initials}`;
+      const current = people.get(key);
+      if (current) {
+        if (!current.roles.includes(role)) current.roles.push(role);
+        return;
+      }
+      people.set(key, { key, fullName, initials, roles: [role] });
+    };
+    analysts.forEach((analyst) => addPerson(analyst, "Analista"));
+    if (laboratorySampled && entry.sampler.trim()) addPerson(entry.sampler, "Muestreador");
+    return [...people.values()];
+  }, [analysts, entry.sampler, laboratorySampled, laboratoryStaff]);
   const firstPageRows = resultPages[0] || [];
   const continuationPages = resultPages.slice(1);
   const totalPages = 3 + continuationPages.length;
@@ -282,9 +334,8 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
               {Array.from({ length: subsampleCount }, (_, index) => <tr key={index}><td>{entry.sampleNumber}-{index + 1}</td>{eligibleRows.map((row) => <td key={row.id}><input aria-label={`${row.label}, submuestra ${index + 1}`} value={subsampleResults[row.id]?.[index] || ""} onChange={(event) => setSubsampleValue(row.id, index, event.target.value)} placeholder="Resultado" disabled={readOnly} /></td>)}</tr>)}
             </tbody></table></>}
           <h3>Personal responsable</h3>
-          <table className="report-table responsible-table"><thead><tr><th>Responsable</th><th>Participación</th><th>Referencia</th></tr></thead><tbody>
-            {analysts.map((analyst) => <tr key={analyst}><td>{analyst}</td><td>Analista</td><td>{analyst}</td></tr>)}
-            {laboratorySampled && <tr><td>{entry.sampler}</td><td>Muestreador</td><td>{entry.sampler}</td></tr>}
+          <table className="report-table responsible-table"><thead><tr><th>Nombre</th><th>Iniciales</th><th>Cargo</th><th>Firma</th></tr></thead><tbody>
+            {responsiblePeople.length === 0 ? <tr><td colSpan={4}>Sin personal responsable registrado.</td></tr> : responsiblePeople.map((person) => <tr key={person.key}><td>{person.fullName}</td><td>{person.initials}</td><td>{person.roles.join(" · ")}</td><td className="report-signature-cell" aria-label={`Espacio de firma para ${person.fullName}`} /></tr>)}
           </tbody></table>
           <ReportFooter page={informationPage} totalPages={totalPages} />
         </section>
