@@ -13,6 +13,7 @@ type AnalysisStrategy = "" | "same" | "different" | "multi-existing" | "multi-ne
 
 const today = () => new Date().toISOString().slice(0, 10);
 const blankSample = (): SampleDraft => ({ mode: "package", packageId: "", parameterIds: [] });
+const clientDisplayName = (client: ClientOption) => `${client.name}${client.branch ? ` · ${client.branch}` : ""}`;
 const formatDate = (value: string) => new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T12:00:00`));
 function dueDate(received: string) {
   const date = new Date(`${received}T12:00:00`);
@@ -31,6 +32,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [multiItems, setMultiItems] = useState<MultiItem[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [client, setClient] = useState("");
+  const [selectedClientNumber, setSelectedClientNumber] = useState<number | null>(null);
   const [multiple, setMultiple] = useState(false);
   const [sampleCount, setSampleCount] = useState(1);
   const [samples, setSamples] = useState<SampleDraft[]>([blankSample()]);
@@ -176,7 +178,8 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       setMessage("Asigna un paquete o parámetros a cada muestra."); return;
     }
 
-    const clientForOrder = clients.find((item) => item.client_number.toString() === client.trim());
+    const clientForOrder = clients.find((item) => item.client_number === selectedClientNumber)
+      || clients.find((item) => item.client_number.toString() === client.trim() || clientDisplayName(item) === client.trim());
     if (!clientForOrder) { setMessage("Selecciona un cliente y sucursal de la lista."); return; }
     setSaving(true);
     const payload = !multiple
@@ -209,7 +212,12 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   }
 
   const selectedMultiName = useMemo(() => multiPackages.find((item) => item.id === selectedMultiPackage)?.name, [multiPackages, selectedMultiPackage]);
-  const selectedClient = useMemo(() => clients.find((item) => item.client_number.toString() === client.trim()), [clients, client]);
+  const selectedClient = useMemo(() => clients.find((item) => item.client_number === selectedClientNumber), [clients, selectedClientNumber]);
+  function selectClientFromValue(value: string, normalizeDisplay = false) {
+    const match = clients.find((item) => clientDisplayName(item) === value.trim() || item.client_number.toString() === value.trim());
+    setSelectedClientNumber(match?.client_number || null);
+    setClient(match && normalizeDisplay ? clientDisplayName(match) : value);
+  }
 
   if (building) return <form className="order-form multi-order-form" onSubmit={(event) => { event.preventDefault(); void saveMultiPackage(); }}>
     <section className="form-card"><h2>Nuevo multipaquete de análisis</h2><p>Esta plantilla podrá reutilizarse en futuras OPs.</p><div className="form-grid"><label>Nombre del multipaquete<input required value={builderName} onChange={(event) => setBuilderName(event.target.value)} /></label><label>Cantidad de muestras<input required type="number" min="1" max="20" value={builderCount} onChange={(event) => changeBuilderCount(Number(event.target.value))} /></label></div></section>
@@ -222,7 +230,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       <h2>Datos de recepción</h2>
       <p>La OP se genera automáticamente al guardar. La fecha compromiso se calcula a ocho días hábiles desde la recepción.</p>
       <div className="form-grid">
-        <label>Cliente y sucursal<input required list="existing-clients" value={client} onChange={(event) => setClient(event.target.value)} placeholder="Buscar y seleccionar cliente" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={item.client_number.toString()}>{`${item.name}${item.branch ? ` · ${item.branch}` : " · Sin sucursal"}`}</option>)}</datalist></label>
+        <label>Cliente y sucursal<input required list="existing-clients" value={client} onChange={(event) => selectClientFromValue(event.target.value)} onBlur={(event) => selectClientFromValue(event.target.value, true)} placeholder="Buscar por cliente o número" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={clientDisplayName(item)} label={`Cliente ${item.client_number}`} />)}</datalist></label>
         <label>¿El laboratorio realizó el muestreo?<select required value={labSampling} onChange={(event) => { const value = event.target.value as "" | "yes" | "no"; setLabSampling(value); if (value === "no") { setSamplingNumber(""); setSampler("El cliente"); } else if (value === "yes" && sampler === "El cliente") { setSampler(""); } }}><option value="">Seleccionar…</option><option value="yes">Sí</option><option value="no">No</option></select></label>
         {labSampling === "yes" && <label>Número de muestreo<input required value={samplingNumber} onChange={(event) => setSamplingNumber(event.target.value)} /></label>}
         {labSampling === "yes" && <label>Muestreador<input value={sampler} onChange={(event) => setSampler(event.target.value)} /></label>}

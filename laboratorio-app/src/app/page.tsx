@@ -148,9 +148,9 @@ export default function Home() {
     const [clientEditSaving, setClientEditSaving] = useState(false);
     const [intakeSubnavVisible, setIntakeSubnavVisible] = useState(false);
     const [clientsSubnavVisible, setClientsSubnavVisible] = useState(false);
-    const [parametersSubnavVisible, setParametersSubnavVisible] = useState(false);
+    const [parametersSubnavVisible] = useState(false);
     const [parameterDirectoryMode, setParameterDirectoryMode] = useState<"list" | "create">("list");
-    const [personnelSubnavVisible, setPersonnelSubnavVisible] = useState(false);
+    const [personnelSubnavVisible] = useState(false);
     const [personnelDirectoryMode, setPersonnelDirectoryMode] = useState<"list" | "create">("list");
     const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
     const [sampleQuery, setSampleQuery] = useState("");
@@ -424,27 +424,18 @@ export default function Home() {
             if (intakeSubnavVisible) items.push(makeButton("↳   OPs eliminados", showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
                 setView("entries"); setShowCancelled(true);
             }));
-            items.push(makeButton("▣   Clientes", view === "clients" && clientDirectoryVisible ? "nav-item active" : "nav-item", () => {
-                setView("clients"); setClientDirectoryVisible(true); setClientsSubnavVisible((visible) => !visible);
-            }));
-            if (clientsSubnavVisible) items.push(makeButton("↳   Alta de clientes", view === "clients" && !clientDirectoryVisible ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
-                setView("clients"); setClientDirectoryVisible(false);
+            items.push(makeButton("▣   Clientes", view === "clients" ? "nav-item active" : "nav-item", () => {
+                setView("clients"); setClientDirectoryVisible(true);
             }));
         }
         items.push(makeButton("▤   Muestras", view === "samples" ? "nav-item active" : "nav-item", () => { setView("samples"); setShowCancelled(false); }));
         if (userRole === "administrador" || userRole === "recepcion") {
-            items.push(makeButton("⌁   Parámetros", view === "parameters" && parameterDirectoryMode === "list" ? "nav-item active" : "nav-item", () => {
-                setView("parameters"); setParameterDirectoryMode("list"); setShowCancelled(false); setParametersSubnavVisible((visible) => !visible);
-            }));
-            if (parametersSubnavVisible) items.push(makeButton("↳   Alta de parámetros", view === "parameters" && parameterDirectoryMode === "create" ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
-                setView("parameters"); setParameterDirectoryMode("create"); setShowCancelled(false);
+            items.push(makeButton("⌁   Parámetros", view === "parameters" ? "nav-item active" : "nav-item", () => {
+                setView("parameters"); setParameterDirectoryMode("list"); setShowCancelled(false);
             }));
         }
-        items.push(makeButton("♙   Personal", view === "personnel" && personnelDirectoryMode === "list" ? "nav-item active" : "nav-item", () => {
-            setView("personnel"); setPersonnelDirectoryMode("list"); setShowCancelled(false); setPersonnelSubnavVisible((visible) => !visible);
-        }));
-        if (personnelSubnavVisible && (userRole === "administrador" || userRole === "recepcion")) items.push(makeButton("↳   Alta de personal", view === "personnel" && personnelDirectoryMode === "create" ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
-            setView("personnel"); setPersonnelDirectoryMode("create"); setShowCancelled(false);
+        items.push(makeButton("♙   Personal", view === "personnel" ? "nav-item active" : "nav-item", () => {
+            setView("personnel"); setPersonnelDirectoryMode("list"); setShowCancelled(false);
         }));
         if (userRole !== "analista") items.push(makeButton("◫   Informes", view === "reports" ? "nav-item active" : "nav-item", () => {
             setView("reports"); setShowCancelled(false);
@@ -523,7 +514,8 @@ export default function Home() {
         setReportPreviewOpen(true);
     }
     function openStaffSample(sample: StaffSample) {
-        void openSample({ id: sample.order_id, op: dash, client: dash, samplingNumber: dash, sampler: dash, quotation: dash, received: formatDate(sample.received_at), due: formatDate(sample.due_date), reportNumber: "", analysis: dash, sampleNumber: sample.sample_code, sampleId: sample.sample_id, analysisOrderCreatedAt: sample.analysis_order_created_at, sampledAt: null, issuedAt: null, isCancelled: false });
+        const fullEntry = userRole === "analista" ? undefined : entries.find((entry) => entry.sampleId === sample.sample_id);
+        void openSample(fullEntry || { id: sample.order_id, op: dash, client: dash, samplingNumber: dash, sampler: dash, quotation: dash, received: formatDate(sample.received_at), due: formatDate(sample.due_date), reportNumber: "", analysis: sample.analysis_label || dash, sampleNumber: sample.sample_code, sampleId: sample.sample_id, analysisOrderCreatedAt: sample.analysis_order_created_at, sampledAt: null, issuedAt: null, isCancelled: false });
     }
     async function generateAnalysisOrder() { if (!selected?.sampleId)
         return; setGeneratingOrder(true); const result = await supabase.rpc("create_worksheet_for_sample", { p_sample_id: selected.sampleId }); setGeneratingOrder(false); if (result.error) {
@@ -598,6 +590,7 @@ export default function Home() {
         setClientMessage(`Cliente guardado. Número de cliente: ${data.client_number}`);
         setNewClientName(""); setNewClientBranch(""); setNewClientContact(""); setNewClientEmail(""); setNewClientPhone(""); setNewClientAddress(""); setNewClientRfc(""); setNewClientAttention("");
         await loadClientDirectory();
+        setClientDirectoryVisible(true);
     }
     function cancelEditingClient() {
         setEditingClient(null);
@@ -717,7 +710,7 @@ export default function Home() {
             <button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session?.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session?.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button>
         </aside>
         <section className="workspace">
-            <header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>Clientes</h1></div></header>
+            <header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>Clientes</h1></div>{clientDirectoryVisible && <button type="button" className="button primary" onClick={() => setClientDirectoryVisible(false)}>Alta de cliente</button>}</header>
             <form className="order-form" onSubmit={createClient}>
                 <section className="form-card">
                     <h2>Alta de cliente</h2><p>Al guardar se asigna un número único de cliente para usar en nuevas OPs.</p>
@@ -732,7 +725,7 @@ export default function Home() {
                     </div>
                     {clientMessage && <p className="auth-message">{clientMessage}</p>}
                 </section>
-                <div className="form-actions"><button type="button" className="button secondary" onClick={() => setView("entries")}>Cancelar</button><button className="button primary" disabled={clientSaving}>{clientSaving ? "Guardando…" : "Guardar cliente"}</button></div>
+                <div className="form-actions"><button type="button" className="button secondary" onClick={() => setClientDirectoryVisible(true)}>Cancelar</button><button className="button primary" disabled={clientSaving}>{clientSaving ? "Guardando…" : "Guardar cliente"}</button></div>
             </form>
         </section>
         {editingClient && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !clientEditSaving) cancelEditingClient(); }}>
@@ -755,7 +748,7 @@ export default function Home() {
     </main>;
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
-    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}</header>
+    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{view === "personnel" && personnelDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}</header>
     {view === "samples" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Muestras</h2><p>{visibleStaffSamples.length} muestras encontradas</p></div><input type="search" value={sampleQuery} onChange={(event) => setSampleQuery(event.target.value)} placeholder="Buscar número de muestra" aria-label="Buscar por número de muestra" /></div>
       <div className="table-wrap"><table className="intake-table" style={{ width: "980px", minWidth: "980px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Análisis</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={5}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras disponibles."}</td></tr> : visibleStaffSamples.map((sample) => <tr key={sample.sample_id}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{sample.analysis_label}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
@@ -764,8 +757,8 @@ export default function Home() {
       <div className="table-toolbar report-toolbar"><div><h2>Informes emitidos</h2><p>{visibleReports.length} de {issuedReports.length} informes mostrados</p></div><div className="report-filters"><select value={reportYear} onChange={(event) => setReportYear(event.target.value)} aria-label="Filtrar informes por año"><option value="all">Todos los años</option>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select><input type="search" value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar informe o cliente" aria-label="Buscar informe o cliente" /></div></div>
       <div className="table-wrap"><table className="report-directory-table"><thead><tr><th>Número de informe</th><th>Cliente</th><th>Tipo de análisis</th><th>Fecha de emisión</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleReports.length === 0 ? <tr><td colSpan={6}>{reportQuery.trim() || reportYear !== "all" ? "No se encontraron informes con esos filtros." : "Aún no hay informes emitidos."}</td></tr> : visibleReports.map((report) => <tr key={report.orderId}><td><strong>{report.reportNumber}</strong></td><td><strong>{report.client}</strong>{report.clientBranch && <span>{report.clientBranch}</span>}</td><td>{report.analysis}</td><td>{formatDate(report.issuedAt)}</td><td><span className="status status-green">Emitido</span></td><td><button type="button" className="button secondary report-view-button" onClick={() => void openIssuedReport(report)}>Ver informe</button></td></tr>)}</tbody></table></div>
     </section>}
-    {view === "parameters" && <ParameterDirectory canCreate={userRole === "administrador" || userRole === "recepcion"} mode={parameterDirectoryMode} />}
-    {view === "personnel" && <PersonnelDirectory canManage={userRole === "administrador" || userRole === "recepcion"} mode={personnelDirectoryMode} userId={session.user.id} />}
+    {view === "parameters" && <ParameterDirectory canCreate={userRole === "administrador" || userRole === "recepcion"} mode={parameterDirectoryMode} onCancel={() => setParameterDirectoryMode("list")} />}
+    {view === "personnel" && <PersonnelDirectory canManage={userRole === "administrador" || userRole === "recepcion"} mode={personnelDirectoryMode} userId={session.user.id} onCancel={() => setPersonnelDirectoryMode("list")} />}
     {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "reports" && <section className="table-card">
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>

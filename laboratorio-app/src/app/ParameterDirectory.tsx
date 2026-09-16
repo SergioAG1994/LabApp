@@ -11,7 +11,7 @@ type ParameterRecord = {
   method_reference: string | null;
 };
 
-export function ParameterDirectory({ canCreate, mode }: { canCreate: boolean; mode: "list" | "create" }) {
+export function ParameterDirectory({ canCreate, mode, onCancel }: { canCreate: boolean; mode: "list" | "create"; onCancel: () => void }) {
   const [parameters, setParameters] = useState<ParameterRecord[]>([]);
   const [shortName, setShortName] = useState("");
   const [formalName, setFormalName] = useState("");
@@ -143,7 +143,7 @@ export function ParameterDirectory({ canCreate, mode }: { canCreate: boolean; mo
         <label>Unidades<input required value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         <label>Método<input required value={method} onChange={(event) => setMethod(event.target.value)} /></label>
       </div>
-      <div className="form-actions"><button className="button primary" disabled={saving}>{saving ? "Guardando…" : "Guardar parámetro"}</button></div>
+      <div className="form-actions"><button type="button" className="button secondary" disabled={saving} onClick={onCancel}>Cancelar</button><button className="button primary" disabled={saving}>{saving ? "Guardando…" : "Guardar parámetro"}</button></div>
     </form>}
     {message && <p className="auth-message">{message}</p>}
     {mode === "list" && <section className="table-card">

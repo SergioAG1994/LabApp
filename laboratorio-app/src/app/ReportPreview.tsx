@@ -40,6 +40,7 @@ type LaboratoryStaff = {
   id: string;
   full_name: string;
   initials: string;
+  position_title: string;
   active: boolean;
 };
 
@@ -47,7 +48,7 @@ type ResponsiblePerson = {
   key: string;
   fullName: string;
   initials: string;
-  roles: string[];
+  positionTitle: string;
 };
 
 type Props = {
@@ -94,6 +95,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
   const [message, setMessage] = useState("");
   const [resultPages, setResultPages] = useState<PreviewRow[][]>(() => [rows]);
   const [laboratoryStaff, setLaboratoryStaff] = useState<LaboratoryStaff[]>([]);
+  const [staffLoading, setStaffLoading] = useState(true);
   const firstPageRef = useRef<HTMLElement>(null);
   const firstPageFixedRef = useRef<HTMLDivElement>(null);
   const rowMeasurementRef = useRef<HTMLDivElement>(null);
@@ -126,16 +128,24 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
     async function loadLaboratoryStaff() {
       const { data } = await supabase
         .from("laboratory_staff")
-        .select("id, full_name, initials, active")
-        .eq("active", true)
+        .select("id, full_name, initials, position_title, active")
         .order("full_name");
-      if (active) setLaboratoryStaff((data || []) as LaboratoryStaff[]);
+      if (!active) return;
+      setLaboratoryStaff((data || []) as LaboratoryStaff[]);
+      setStaffLoading(false);
     }
     void loadLaboratoryStaff();
     return () => { active = false; };
   }, []);
 
   const analysts = useMemo(() => [...new Set(rows.map((row) => row.analyst_name?.trim()).filter(Boolean) as string[])], [rows]);
+  const samplerFullName = useMemo(() => {
+    const reference = entry.sampler.trim();
+    const normalizedReference = reference.toLocaleUpperCase();
+    return laboratoryStaff.find((person) => person.initials.trim().toLocaleUpperCase() === normalizedReference)?.full_name
+      || laboratoryStaff.find((person) => person.full_name.trim().toLocaleLowerCase() === reference.toLocaleLowerCase())?.full_name
+      || entry.sampler;
+  }, [entry.sampler, laboratoryStaff]);
   const responsiblePeople = useMemo(() => {
     const people = new Map<string, ResponsiblePerson>();
     const findStaff = (reference: string) => {
@@ -143,20 +153,16 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
       return laboratoryStaff.find((person) => person.initials.trim().toLocaleUpperCase() === normalizedReference)
         || laboratoryStaff.find((person) => person.full_name.trim().toLocaleLowerCase() === reference.trim().toLocaleLowerCase());
     };
-    const addPerson = (reference: string, role: string) => {
+    const addPerson = (reference: string) => {
       const staffMember = findStaff(reference);
       const fullName = staffMember?.full_name || reference;
       const initials = staffMember?.initials || reference;
       const key = staffMember?.id || `${fullName}-${initials}`;
-      const current = people.get(key);
-      if (current) {
-        if (!current.roles.includes(role)) current.roles.push(role);
-        return;
-      }
-      people.set(key, { key, fullName, initials, roles: [role] });
+      if (people.has(key)) return;
+      people.set(key, { key, fullName, initials, positionTitle: staffMember?.position_title || "Sin puesto registrado" });
     };
-    analysts.forEach((analyst) => addPerson(analyst, "Analista"));
-    if (laboratorySampled && entry.sampler.trim()) addPerson(entry.sampler, "Muestreador");
+    analysts.forEach(addPerson);
+    if (laboratorySampled && entry.sampler.trim()) addPerson(entry.sampler);
     return [...people.values()];
   }, [analysts, entry.sampler, laboratorySampled, laboratoryStaff]);
   const firstPageRows = resultPages[0] || [];
@@ -272,12 +278,12 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
         <p>{FIXED_OBSERVATION}.</p>
         <p><b>Norma de muestreo:</b> {laboratorySampled ? "NMX-AA-003-1980" : "No aplica"}</p>
         <label><b>Fecha de muestreo:</b> {laboratorySampled ? <input type="date" value={draftSampledAt} onChange={(event) => setDraftSampledAt(event.target.value)} disabled={readOnly} /> : <span>No aplica</span>}</label>
-        <p><b>Responsable del muestreo:</b> {laboratorySampled ? entry.sampler : "El cliente"}</p>
+        <p><b>Responsable del muestreo:</b> {laboratorySampled ? samplerFullName : "El cliente"}</p>
       </td>
     </tr></tbody>
   </table>;
 
-  if (loading) return <div className="report-preview-backdrop"><div className="report-preview-loading">Preparando pre-informe…</div></div>;
+  if (loading || staffLoading) return <div className="report-preview-backdrop"><div className="report-preview-loading">Preparando pre-informe…</div></div>;
 
   return <div className="report-preview-backdrop">
     <div className="report-preview-shell">
@@ -335,7 +341,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
             </tbody></table></>}
           <h3>Personal responsable</h3>
           <table className="report-table responsible-table"><thead><tr><th>Nombre</th><th>Iniciales</th><th>Cargo</th><th>Firma</th></tr></thead><tbody>
-            {responsiblePeople.length === 0 ? <tr><td colSpan={4}>Sin personal responsable registrado.</td></tr> : responsiblePeople.map((person) => <tr key={person.key}><td>{person.fullName}</td><td>{person.initials}</td><td>{person.roles.join(" · ")}</td><td className="report-signature-cell" aria-label={`Espacio de firma para ${person.fullName}`} /></tr>)}
+            {responsiblePeople.length === 0 ? <tr><td colSpan={4}>Sin personal responsable registrado.</td></tr> : responsiblePeople.map((person) => <tr key={person.key}><td>{person.fullName}</td><td>{person.initials}</td><td>{person.positionTitle}</td><td className="report-signature-cell" aria-label={`Espacio de firma para ${person.fullName}`} /></tr>)}
           </tbody></table>
           <ReportFooter page={informationPage} totalPages={totalPages} />
         </section>

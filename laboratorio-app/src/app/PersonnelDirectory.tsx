@@ -21,7 +21,7 @@ const functionOptions: Array<{ value: StaffFunction; label: string }> = [
   { value: "responsable_autorizacion", label: "Responsable de autorización" },
 ];
 
-export function PersonnelDirectory({ canManage, mode, userId }: { canManage: boolean; mode: "list" | "create"; userId: string }) {
+export function PersonnelDirectory({ canManage, mode, userId, onCancel }: { canManage: boolean; mode: "list" | "create"; userId: string; onCancel: () => void }) {
   const [staff, setStaff] = useState<StaffRecord[]>([]);
   const [fullName, setFullName] = useState("");
   const [initials, setInitials] = useState("");
@@ -111,7 +111,7 @@ export function PersonnelDirectory({ canManage, mode, userId }: { canManage: boo
       </div>
       <fieldset className="personnel-functions"><legend>Funciones</legend>{functionOptions.map((option) => <label key={option.value}><input type="checkbox" checked={functions.includes(option.value)} onChange={() => toggleFunction(option.value)} />{option.label}</label>)}</fieldset>
       <label className="personnel-active-check"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />Registrar como activo</label>
-      <div className="form-actions"><button className="button primary" disabled={saving}>{saving ? "Guardando…" : "Guardar integrante"}</button></div>
+      <div className="form-actions"><button type="button" className="button secondary" disabled={saving} onClick={onCancel}>Cancelar</button><button className="button primary" disabled={saving}>{saving ? "Guardando…" : "Guardar integrante"}</button></div>
     </form>}
     {message && <p className="auth-message">{message}</p>}
     {mode === "list" && <section className="table-card">
