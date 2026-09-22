@@ -11,6 +11,37 @@ type ClientOption = { client_number: number; name: string; branch: string | null
 type SampleDraft = { mode: "package" | "custom"; packageId: string; parameterIds: string[] };
 type AnalysisStrategy = "" | "same" | "different" | "multi-existing" | "multi-new";
 
+type ParameterCategory = "metals" | "microbiological" | "physicochemical";
+
+const metalParameterNames = new Set([
+  "al", "antimonio", "as", "ba", "berilio", "ca", "cd", "cr", "cr vi", "cu", "fe", "hg", "mg", "mn", "na", "ni", "pb", "potasio", "selenio", "si", "sn", "sr", "zinc", "zn",
+]);
+const normalizeParameterName = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+function parameterCategory(parameter: Parameter): ParameterCategory {
+  const name = normalizeParameterName(parameter.name);
+  if (metalParameterNames.has(name)) return "metals";
+  if (name.startsWith("col fec") || name.startsWith("col tot") || name.startsWith("e. coli") || name === "hh" || name.includes("huevo")) return "microbiological";
+  return "physicochemical";
+}
+
+function ParameterPicker({ parameters, selectedIds, onToggle }: { parameters: Parameter[]; selectedIds: string[]; onToggle: (parameterId: string) => void }) {
+  const categories: Array<{ id: ParameterCategory; label: string }> = [
+    { id: "metals", label: "Metales" },
+    { id: "microbiological", label: "Microbiológicos" },
+    { id: "physicochemical", label: "Fisicoquímicos" },
+  ];
+
+  return <div className="parameter-picker grouped-parameter-picker">
+    {categories.map((category) => {
+      const categoryParameters = parameters.filter((parameter) => parameterCategory(parameter) === category.id);
+      return <details className="parameter-category" key={category.id} open>
+        <summary>{category.label}</summary>
+        <div className="parameter-category-grid">{categoryParameters.map((parameter) => <label className="parameter-option" key={parameter.id}><input type="checkbox" checked={selectedIds.includes(parameter.id)} onChange={() => onToggle(parameter.id)} /><span>{parameter.name}<small>{parameter.unit || "Sin unidad"}</small></span></label>)}</div>
+      </details>;
+    })}
+  </div>;
+}
+
 const today = () => new Date().toISOString().slice(0, 10);
 const blankSample = (): SampleDraft => ({ mode: "package", packageId: "", parameterIds: [] });
 const clientDisplayName = (client: ClientOption) => `${client.name}${client.branch ? ` · ${client.branch}` : ""}`;
@@ -36,6 +67,8 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [multiple, setMultiple] = useState(false);
   const [sampleCount, setSampleCount] = useState(1);
   const [samples, setSamples] = useState<SampleDraft[]>([blankSample()]);
+  const [saveCustomPackage, setSaveCustomPackage] = useState(false);
+  const [customPackageName, setCustomPackageName] = useState("");
   const [labSampling, setLabSampling] = useState<"" | "yes" | "no">("");
   const [samplingNumber, setSamplingNumber] = useState("");
   const [analysisStrategy, setAnalysisStrategy] = useState<AnalysisStrategy>("");
@@ -169,7 +202,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
     if (labSampling === "") { setMessage("Indica si el muestreo fue realizado por el laboratorio."); return; }
     if (labSampling === "yes" && !samplingNumber.trim()) { setMessage("Captura el número de muestreo."); return; }
     if (multiple && analysisStrategy === "") { setMessage("Selecciona cómo se asignarán los análisis de las muestras."); return; }
-    if (!multiple && !samples[0].packageId) { setMessage("Selecciona el análisis."); return; }
+    if (!multiple && (samples[0].mode === "package" ? !samples[0].packageId : samples[0].parameterIds.length === 0)) { setMessage("Selecciona el análisis o al menos un parámetro personalizado."); return; }
     if (multiple && analysisStrategy === "multi-existing" && !selectedMultiPackage) { setMessage("Selecciona un multipaquete existente."); return; }
     if (multiple && analysisStrategy === "same" && (sharedMode === "package" ? !sharedPackageId : sharedParameterIds.length === 0)) {
       setMessage("Selecciona el paquete o los parámetros que se aplicarán a todas las muestras."); return;
@@ -181,9 +214,32 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
     const clientForOrder = clients.find((item) => item.client_number === selectedClientNumber)
       || clients.find((item) => item.client_number.toString() === client.trim() || clientDisplayName(item) === client.trim());
     if (!clientForOrder) { setMessage("Selecciona un cliente y sucursal de la lista."); return; }
+    if (!multiple && samples[0].mode === "custom" && saveCustomPackage && !customPackageName.trim()) {
+      setMessage("Captura un nombre para guardar la configuración como paquete reutilizable.");
+      return;
+    }
+
     setSaving(true);
+    let singleSamplePayload = samples[0].mode === "package"
+      ? { package_id: samples[0].packageId }
+      : { parameter_ids: samples[0].parameterIds };
+
+    if (!multiple && samples[0].mode === "custom" && saveCustomPackage) {
+      const { data, error } = await supabase.rpc("save_custom_analysis_package", {
+        p_name: customPackageName.trim(),
+        p_parameter_ids: samples[0].parameterIds,
+      });
+      if (error || !data) {
+        setSaving(false);
+        setMessage(`No se pudo guardar el paquete personalizado: ${error?.message || "no se obtuvo el identificador"}`);
+        return;
+      }
+      singleSamplePayload = { package_id: data as string };
+      await loadCatalogs();
+    }
+
     const payload = !multiple
-      ? samples.map((sample) => ({ package_id: sample.packageId }))
+      ? [singleSamplePayload]
       : analysisStrategy === "same"
         ? Array.from({ length: sampleCount }, () => sharedMode === "package"
           ? { package_id: sharedPackageId }
@@ -221,7 +277,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
 
   if (building) return <form className="order-form multi-order-form" onSubmit={(event) => { event.preventDefault(); void saveMultiPackage(); }}>
     <section className="form-card"><h2>Nuevo multipaquete de análisis</h2><p>Esta plantilla podrá reutilizarse en futuras OPs.</p><div className="form-grid"><label>Nombre del multipaquete<input required value={builderName} onChange={(event) => setBuilderName(event.target.value)} /></label><label>Cantidad de muestras<input required type="number" min="1" max="20" value={builderCount} onChange={(event) => changeBuilderCount(Number(event.target.value))} /></label></div></section>
-    {builderParameters.map((ids, index) => <section className="form-card sample-config-card" key={index}><h2>Muestra {index + 1}</h2><p>Selecciona los parámetros que formarán su OA.</p><div className="parameter-picker">{parameters.map((parameter) => <label className="parameter-option" key={parameter.id}><input type="checkbox" checked={ids.includes(parameter.id)} onChange={() => toggleParameter(index, parameter.id, true)} /><span>{parameter.name}<small>{parameter.unit || "Sin unidad"}</small></span></label>)}</div></section>)}
+    {builderParameters.map((ids, index) => <section className="form-card sample-config-card" key={index}><h2>Muestra {index + 1}</h2><p>Selecciona los parámetros que formarán su OA.</p><ParameterPicker parameters={parameters} selectedIds={ids} onToggle={(parameterId) => toggleParameter(index, parameterId, true)} /></section>)}
     {message && <p className="auth-message">{message}</p>}<div className="form-actions"><button type="button" className="button secondary" onClick={() => { setBuilding(false); setAnalysisStrategy(""); }}>Volver</button><button className="button primary" disabled={builderSaving}>{builderSaving ? "Guardando…" : "Guardar multipaquete"}</button></div>
   </form>;
 
@@ -238,9 +294,15 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
         {labSampling === "no" && <label>Muestreador<input value="El cliente" disabled /></label>}
         <label>Cotización<input value={quotation} onChange={(event) => setQuotation(event.target.value)} /></label>
         <label>Fecha de recepción<input required type="date" value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)} /></label>
-        {!multiple && <label>Análisis<select required value={samples[0].packageId} onChange={(event) => updateSample(0, { mode: "package", packageId: event.target.value })}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+        {!multiple && <label>Análisis<select required value={samples[0].mode === "custom" ? "custom" : samples[0].packageId} onChange={(event) => {
+          setSaveCustomPackage(false);
+          setCustomPackageName("");
+          if (event.target.value === "custom") updateSample(0, { mode: "custom", packageId: "" });
+          else updateSample(0, { mode: "package", packageId: event.target.value, parameterIds: [] });
+        }}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="custom">Personalizar parámetros</option></select></label>}
       </div>
       {selectedClient && <div className="selected-client"><strong>Cliente {selectedClient.client_number}: {selectedClient.name}</strong><span>{[selectedClient.branch ? `Sucursal: ${selectedClient.branch}` : null, selectedClient.contact_name, selectedClient.rfc, selectedClient.address].filter(Boolean).join(" · ") || "Cliente existente seleccionado"}</span></div>}
+      {!multiple && samples[0].mode === "custom" && <div className="strategy-detail"><p className="selection-note">Selecciona los parámetros que integrarán esta OA personalizada.</p><ParameterPicker parameters={parameters} selectedIds={samples[0].parameterIds} onToggle={(parameterId) => toggleParameter(0, parameterId)} /><label className="check-label"><input type="checkbox" checked={saveCustomPackage} onChange={(event) => setSaveCustomPackage(event.target.checked)} />Guardar esta configuración para futuras OPs</label>{saveCustomPackage && <label className="standalone-field">Nombre del paquete reutilizable<input required value={customPackageName} onChange={(event) => setCustomPackageName(event.target.value)} placeholder="Ej. Análisis especial de descarga" /></label>}</div>}
     </section>
     <section className="form-card">
       <h2>Fechas automáticas</h2>
@@ -255,10 +317,10 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
         <button type="button" className={analysisStrategy === "multi-existing" ? "analysis-strategy-card selected" : "analysis-strategy-card"} onClick={() => chooseAnalysisStrategy("multi-existing")} data-tooltip="Reutiliza una configuración previamente guardada."><strong>Multipaquete existente</strong><span>Usar una plantilla reutilizable</span></button>
         <button type="button" className={analysisStrategy === "multi-new" ? "analysis-strategy-card selected" : "analysis-strategy-card"} onClick={() => chooseAnalysisStrategy("multi-new")} data-tooltip="Crea y guarda una configuración reutilizable para futuras OPs."><strong>Nuevo multipaquete</strong><span>Crear una nueva plantilla de muestras y parámetros</span></button>
       </div>
-      {analysisStrategy === "same" && <div className="strategy-detail"><div className="form-grid"><label>Forma de asignar el análisis<select value={sharedMode} onChange={(event) => { setSharedMode(event.target.value as "package" | "custom"); }}><option value="package">Paquete existente</option><option value="custom">Parámetros individuales</option></select></label>{sharedMode === "package" && <label>Paquete de análisis<select required value={sharedPackageId} onChange={(event) => setSharedPackageId(event.target.value)}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}</div>{sharedMode === "custom" && <div className="parameter-picker">{parameters.map((parameter) => <label className="parameter-option" key={parameter.id}><input type="checkbox" checked={sharedParameterIds.includes(parameter.id)} onChange={() => toggleSharedParameter(parameter.id)} /><span>{parameter.name}<small>{parameter.unit || "Sin unidad"}</small></span></label>)}</div>}<p className="selection-note">La configuración seleccionada se aplicará a las {sampleCount} muestras.</p></div>}
+      {analysisStrategy === "same" && <div className="strategy-detail"><div className="form-grid"><label>Forma de asignar el análisis<select value={sharedMode} onChange={(event) => { setSharedMode(event.target.value as "package" | "custom"); }}><option value="package">Paquete existente</option><option value="custom">Parámetros individuales</option></select></label>{sharedMode === "package" && <label>Paquete de análisis<select required value={sharedPackageId} onChange={(event) => setSharedPackageId(event.target.value)}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}</div>{sharedMode === "custom" && <ParameterPicker parameters={parameters} selectedIds={sharedParameterIds} onToggle={toggleSharedParameter} />}<p className="selection-note">La configuración seleccionada se aplicará a las {sampleCount} muestras.</p></div>}
       {analysisStrategy === "multi-existing" && <div className="strategy-detail form-grid"><label>Multipaquete<select required value={selectedMultiPackage} onChange={(event) => chooseMultiPackage(event.target.value)}><option value="">Seleccionar…</option>{multiPackages.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sample_count} muestra(s)</option>)}</select></label>{selectedMultiName && <p className="selection-note">Plantilla seleccionada: <strong>{selectedMultiName}</strong></p>}</div>}
       </section>
-      {analysisStrategy === "different" && samples.map((sample, index) => <section className="form-card sample-config-card" key={index}><h2>Muestra {index + 1}</h2><p>El número de muestra se asignará automáticamente al registrar la OP.</p><div className="form-grid"><label>Forma de asignar el análisis<select value={sample.mode} onChange={(event) => updateSample(index, { mode: event.target.value as "package" | "custom", packageId: "", parameterIds: [] })}><option value="package">Paquete existente</option><option value="custom">Parámetros individuales</option></select></label>{sample.mode === "package" && <label>Paquete de análisis<select required value={sample.packageId} onChange={(event) => updateSample(index, { packageId: event.target.value })}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}</div>{sample.mode === "custom" && <div className="parameter-picker">{parameters.map((parameter) => <label className="parameter-option" key={parameter.id}><input type="checkbox" checked={sample.parameterIds.includes(parameter.id)} onChange={() => toggleParameter(index, parameter.id)} /><span>{parameter.name}<small>{parameter.unit || "Sin unidad"}</small></span></label>)}</div>}</section>)}
+      {analysisStrategy === "different" && samples.map((sample, index) => <section className="form-card sample-config-card" key={index}><h2>Muestra {index + 1}</h2><p>El número de muestra se asignará automáticamente al registrar la OP.</p><div className="form-grid"><label>Forma de asignar el análisis<select value={sample.mode} onChange={(event) => updateSample(index, { mode: event.target.value as "package" | "custom", packageId: "", parameterIds: [] })}><option value="package">Paquete existente</option><option value="custom">Parámetros individuales</option></select></label>{sample.mode === "package" && <label>Paquete de análisis<select required value={sample.packageId} onChange={(event) => updateSample(index, { packageId: event.target.value })}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}</div>{sample.mode === "custom" && <ParameterPicker parameters={parameters} selectedIds={sample.parameterIds} onToggle={(parameterId) => toggleParameter(index, parameterId)} />}</section>)}
       {analysisStrategy === "multi-existing" && selectedMultiName && <section className="form-card sample-config-card"><p className="selection-note">El multipaquete <strong>{selectedMultiName}</strong> definirá los parámetros de sus {sampleCount} muestras.</p></section>}
     </>}
     {message && <p className="auth-message">{message}</p>}<div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancelar</button><button className="button primary" disabled={saving}>{saving ? "Guardando…" : multiple ? "Registrar OP" : "Registrar entrada"}</button></div>
