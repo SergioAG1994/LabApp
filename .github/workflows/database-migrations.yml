@@ -1,0 +1,93 @@
+name: Database migrations
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'laboratorio-app/supabase/**'
+      - '.github/workflows/database-migrations.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'laboratorio-app/supabase/**'
+      - '.github/workflows/database-migrations.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: laboratorio-app
+
+jobs:
+  validate:
+    name: Validate migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1
+        with:
+          version: 2.117.0
+      - name: Check migration names and versions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          versions = set()
+          files = sorted(Path('supabase/migrations').glob('*.sql'))
+          if not files:
+              raise SystemExit('No migrations found')
+          for path in files:
+              match = re.fullmatch(r'(\d{14})_[a-z0-9_]+\.sql', path.name)
+              if not match or match[1] in versions:
+                  raise SystemExit(f'Invalid or duplicate migration version: {path.name}')
+              versions.add(match[1])
+          if list(Path('supabase').glob('*.sql')):
+              raise SystemExit('Put SQL changes in supabase/migrations, not supabase/')
+          PY
+      - name: Apply migrations to a disposable database
+        run: |
+          supabase db start
+          supabase db reset --local --no-seed
+      - name: Stop local database
+        if: always()
+        run: supabase stop --no-backup
+
+  deploy:
+    name: Apply production migrations
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: production-database-migrations
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1
+        with:
+          version: 2.117.0
+      - name: Apply pending migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          MIGRATIONS_READY: ${{ vars.SUPABASE_MIGRATIONS_READY }}
+        run: |
+          for variable in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_PROJECT_ID; do
+            if [[ -z "${!variable}" ]]; then
+              echo "::error::Missing repository secret: ${variable}. See supabase/README.md."
+              exit 1
+            fi
+          done
+          if [[ "$MIGRATIONS_READY" != "true" ]]; then
+            echo "::error::Complete the migration-history setup in supabase/README.md, then set SUPABASE_MIGRATIONS_READY=true."
+            exit 1
+          fi
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
+          supabase db push --linked --dry-run
+          supabase db push --linked --yes

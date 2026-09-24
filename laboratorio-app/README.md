@@ -1,5 +1,12 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Database migrations
+
+Supabase migrations live in [`supabase/migrations`](supabase/migrations). Pull requests
+validate them against a disposable database; merges to `main` that change the database
+apply pending migrations to production. Complete the [one-time setup](supabase/README.md)
+before enabling production migration runs.
+
 ## Getting Started
 
 First, run the development server:
