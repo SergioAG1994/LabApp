@@ -7,7 +7,7 @@ type AnalysisPackage = { id: string; code: string; name: string };
 type Parameter = { id: string; name: string; unit: string | null };
 type MultiPackage = { id: string; name: string; sample_count: number };
 type MultiItem = { multi_package_id: string; sample_position: number; parameter_id: string; display_order: number };
-type ClientOption = { client_number: number; name: string; branch: string | null; contact_name: string | null; address: string | null; rfc: string | null };
+type ClientOption = { id: string; client_number: number; name: string; branch: string | null; contact_name: string | null; address: string | null; rfc: string | null };
 type SampleDraft = { mode: "package" | "custom"; packageId: string; parameterIds: string[] };
 type AnalysisStrategy = "" | "same" | "different" | "multi-existing" | "multi-new";
 
@@ -93,7 +93,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       supabase.from("parameters").select("id, name, unit").eq("active", true).order("name"),
       supabase.from("multi_packages").select("id, name, sample_count").eq("active", true).order("name"),
       supabase.from("multi_package_items").select("multi_package_id, sample_position, parameter_id, display_order").order("display_order"),
-      supabase.from("clients").select("client_number, name, branch, contact_name, address, rfc").eq("active", true).order("name"),
+      supabase.from("clients").select("id, client_number, name, branch, contact_name, address, rfc").eq("active", true).order("name"),
     ]);
     const packageData = (packageResult.data || []) as AnalysisPackage[];
     setPackages(packageData);
@@ -249,8 +249,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
             ? { package_id: sample.packageId }
             : { parameter_ids: sample.parameterIds })
           : samples.map(() => ({}));
-    const { error } = await supabase.rpc("create_sample_entry_batch_auto", {
-      p_client_name: clientForOrder.client_number.toString(),
+    const orderArgs = {
       p_samples: payload,
       p_lab_sampling: labSampling === "yes",
       p_sampling_number: labSampling === "yes" ? samplingNumber : null,
@@ -261,7 +260,17 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       p_quotation_number: quotation || null,
       p_billing_details: null,
       p_precaptured: false,
+    };
+    let { error } = await supabase.rpc("create_sample_entry_batch_auto_for_client", {
+      ...orderArgs, p_client_id: clientForOrder.id,
     });
+    // SQL is deployed separately. Only a missing RPC may use the old numeric
+    // client reference; validation, authorization and network errors must surface.
+    if (error?.code === "PGRST202" && error.message.includes("create_sample_entry_batch_auto_for_client")) {
+      ({ error } = await supabase.rpc("create_sample_entry_batch_auto", {
+        ...orderArgs, p_client_name: clientForOrder.client_number.toString(),
+      }));
+    }
     setSaving(false);
     if (error) { setMessage(`No se pudo registrar la OP: ${error.message}`); return; }
     await onCreated();
