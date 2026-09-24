@@ -166,7 +166,7 @@ begin
  exception when lock_not_available then
   raise exception 'La hoja tiene cambios concurrentes. Recarga antes de guardar' using errcode='40001';
  end;
- if not found then raise exception 'La muestra no tiene hoja de resultados'; end if;
+ if worksheet.id is null then raise exception 'La muestra no tiene hoja de resultados'; end if;
  if worksheet.revision<>p_expected_revision then raise exception 'La hoja cambió desde que la abriste. Recarga antes de guardar' using errcode='40001'; end if;
  if jsonb_array_length(p_rows)=0 or jsonb_array_length(p_rows)<>(select count(*) from public.analysis_results where worksheet_id=worksheet.id)
     or exists(select 1 from jsonb_array_elements(p_rows) x where jsonb_typeof(x)<>'object' or nullif(x->>'id','') is null)
