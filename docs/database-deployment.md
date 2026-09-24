@@ -15,7 +15,15 @@ Merging these PRs updates application code and SQL source. It does not apply SQL
 - `041_access_and_issued_protection.sql`: restrict privileged function access; prevent edits, cancellation, deletion, and relationship changes that would alter issued analysis records. Existing reissuance behavior remains; report snapshots/versioning are not included.
 - `042_references_and_numbering.sql`: enforces matching draft/sample/order references, adds UUID client creation, and maintains counters for orders, samples, and reports. Existing identifiers are not changed. New dates use the existing two-digit-year format and are restricted to 2000–2099. The order form temporarily falls back to the old numeric-client entry point only when the new function is missing.
 - `043_staff_and_audit.sql` adds stable staff references, records database-side change history, and introduces an atomic worksheet save with a revision check. Review unresolved legacy names/initials instead of assigning ambiguous records automatically. The signed-in actor remains distinct from the laboratory participant credited with the work. Legacy direct result writes remain supported for staged deployment and also update the revision/history; the new save function requires staff IDs for new attribution. Existing unlinked text can be retained unchanged.
-- Structured measurement changes follow in a separate PR. Permanent report snapshots/versioning are excluded.
+- `044_structured_results.sql`: preserves original result text and derives exact numeric values/comparisons or descriptive text. It adds explicit numeric/text entry modes while retaining automatic interpretation for older records. Missing044 columns do not disable043 atomic saves. Permanent report snapshots/versioning remain excluded.
+
+## Result entry after 044
+
+- **Automatic:** unambiguous decimals and comparisons such as `0.05` or `<0.05` are numeric; other content stays descriptive text.
+- **Number:** requires a decimal with a point, optionally `<`, `<=`, `>`, `>=`, `≤`, or `≥`. Maximum 100 total digits and 128 trimmed characters; commas, exponents, trailing decimal points, infinities and NaN are rejected.
+- **Text:** preserves descriptive content, including numeric-looking text when explicitly chosen.
+
+Existing reported text is not rewritten during the upgrade, including issued results. Ambiguous values such as `1,234` remain text in automatic mode. Accepted numbers stay exact decimals; the worksheet view exposes their numeric representation as text to avoid browser rounding. Existing catalog defaults are not used to force qualitative tests into numeric entry.
 
 ## Verification
 
