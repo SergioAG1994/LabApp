@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { eligibleStaff, type LaboratoryStaff } from "@/lib/staff-attribution";
 
 type AnalysisPackage = { id: string; code: string; name: string };
 type Parameter = { id: string; name: string; unit: string | null };
@@ -77,6 +78,8 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [sharedPackageId, setSharedPackageId] = useState("");
   const [sharedParameterIds, setSharedParameterIds] = useState<string[]>([]);
   const [sampler, setSampler] = useState("");
+  const [samplerStaffId, setSamplerStaffId] = useState("");
+  const [laboratoryStaff, setLaboratoryStaff] = useState<LaboratoryStaff[]>([]);
   const [quotation, setQuotation] = useState("");
   const [receivedAt, setReceivedAt] = useState(today());
   const [saving, setSaving] = useState(false);
@@ -88,12 +91,13 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [builderSaving, setBuilderSaving] = useState(false);
 
   async function loadCatalogs() {
-    const [packageResult, parameterResult, multiResult, itemResult, clientResult] = await Promise.all([
+    const [packageResult, parameterResult, multiResult, itemResult, clientResult, staffResult] = await Promise.all([
       supabase.from("analysis_packages").select("id, code, name").eq("active", true).order("name"),
       supabase.from("parameters").select("id, name, unit").eq("active", true).order("name"),
       supabase.from("multi_packages").select("id, name, sample_count").eq("active", true).order("name"),
       supabase.from("multi_package_items").select("multi_package_id, sample_position, parameter_id, display_order").order("display_order"),
       supabase.from("clients").select("id, client_number, name, branch, contact_name, address, rfc").eq("active", true).order("name"),
+      supabase.from("laboratory_staff").select("id, full_name, initials, active, functions").order("full_name"),
     ]);
     const packageData = (packageResult.data || []) as AnalysisPackage[];
     setPackages(packageData);
@@ -108,6 +112,8 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
     setMultiPackages((multiResult.data || []) as MultiPackage[]);
     setMultiItems((itemResult.data || []) as MultiItem[]);
     setClients((clientResult.data || []) as ClientOption[]);
+    setLaboratoryStaff((staffResult.data || []) as LaboratoryStaff[]);
+    if (staffResult.error) setMessage(`No se pudo cargar el personal: ${staffResult.error.message}`);
   }
 
   useEffect(() => {
@@ -261,9 +267,14 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       p_billing_details: null,
       p_precaptured: false,
     };
-    let { error } = await supabase.rpc("create_sample_entry_batch_auto_for_client", {
-      ...orderArgs, p_client_id: clientForOrder.id,
+    let { error } = await supabase.rpc("create_sample_entry_batch_auto_with_staff", {
+      ...orderArgs, p_client_id: clientForOrder.id, p_sampler_staff_id: labSampling === "yes" ? samplerStaffId || null : null,
     });
+    if (error?.code === "PGRST202" && error.message.includes("create_sample_entry_batch_auto_with_staff")) {
+      ({ error } = await supabase.rpc("create_sample_entry_batch_auto_for_client", {
+        ...orderArgs, p_client_id: clientForOrder.id,
+      }));
+    }
     // SQL is deployed separately. Only a missing RPC may use the old numeric
     // client reference; validation, authorization and network errors must surface.
     if (error?.code === "PGRST202" && error.message.includes("create_sample_entry_batch_auto_for_client")) {
@@ -296,9 +307,9 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       <p>La OP se genera automáticamente al guardar. La fecha compromiso se calcula a ocho días hábiles desde la recepción.</p>
       <div className="form-grid">
         <label>Cliente y sucursal<input required list="existing-clients" value={client} onChange={(event) => selectClientFromValue(event.target.value)} onBlur={(event) => selectClientFromValue(event.target.value, true)} placeholder="Buscar por cliente o número" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={clientDisplayName(item)} label={`Cliente ${item.client_number}`} />)}</datalist></label>
-        <label>¿El laboratorio realizó el muestreo?<select required value={labSampling} onChange={(event) => { const value = event.target.value as "" | "yes" | "no"; setLabSampling(value); if (value === "no") { setSamplingNumber(""); setSampler("El cliente"); } else if (value === "yes" && sampler === "El cliente") { setSampler(""); } }}><option value="">Seleccionar…</option><option value="yes">Sí</option><option value="no">No</option></select></label>
+        <label>¿El laboratorio realizó el muestreo?<select required value={labSampling} onChange={(event) => { const value = event.target.value as "" | "yes" | "no"; setLabSampling(value); if (value === "no") { setSamplingNumber(""); setSampler("El cliente"); setSamplerStaffId(""); } else if (value === "yes" && sampler === "El cliente") { setSampler(""); } }}><option value="">Seleccionar…</option><option value="yes">Sí</option><option value="no">No</option></select></label>
         {labSampling === "yes" && <label>Número de muestreo<input required value={samplingNumber} onChange={(event) => setSamplingNumber(event.target.value)} /></label>}
-        {labSampling === "yes" && <label>Muestreador<input value={sampler} onChange={(event) => setSampler(event.target.value)} /></label>}
+        {labSampling === "yes" && <label>Muestreador<select value={samplerStaffId} onChange={(event) => { setSamplerStaffId(event.target.value); setSampler(laboratoryStaff.find((person) => person.id === event.target.value)?.full_name || ""); }}><option value="">Sin asignar</option>{laboratoryStaff.filter((person) => eligibleStaff(person, "muestreador")).map((person) => <option key={person.id} value={person.id}>{person.full_name} ({person.initials})</option>)}</select></label>}
         {labSampling === "no" && <label>Número de muestreo<input value="N/A" disabled /></label>}
         {labSampling === "no" && <label>Muestreador<input value="El cliente" disabled /></label>}
         <label>Cotización<input value={quotation} onChange={(event) => setQuotation(event.target.value)} /></label>
