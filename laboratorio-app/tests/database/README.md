@@ -6,4 +6,4 @@ The runner creates a fresh PostgreSQL container with networking disabled, no exp
 
 The container and its anonymous volumes are removed on completion or failure. No production credentials are needed or read. These tests exercise PostgreSQL permissions and application functions; they do not simulate the hosted Auth service, PostgREST, or a production migration baseline.
 
-Historical migrations have duplicate numeric prefixes. The runner deliberately preserves their existing filename order; it is not a production deployment tool. Before applying new migrations in production, verify its actual schema and migration history. CI validates changes but does not deploy them.
+Historical migrations have duplicate numeric prefixes. The runner deliberately preserves their existing filename order; it is not a production deployment tool. Before applying new migrations in production, verify its actual schema and migration history. The runner validates changes but does not deploy them. GitHub Actions setup is pending a publishing credential with workflow permission. Run this harness, `npm run lint`, and `npm run build` locally before merging.
