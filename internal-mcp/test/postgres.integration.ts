@@ -46,7 +46,9 @@ test(
       max: 5,
     });
     t.after(() => pool.end());
-    const h = await harness({ database: new PostgresDatabase(pool, 100) });
+    // Exercise the production timeout. A 100 ms test override can cancel the
+    // permission audit itself on a cold or contended CI runner.
+    const h = await harness({ database: new PostgresDatabase(pool) });
     t.after(h.close);
     const call = (sql: string, params?: unknown[]) =>
       h.call("query", { sql, params });
@@ -62,6 +64,8 @@ test(
     assert.deepEqual(r.value.rows, [[{ nested: { ok: true } }]]);
     r = await call("SHOW transaction_read_only");
     assert.deepEqual(r.value.rows, [["on"]]);
+    r = await call("SHOW statement_timeout");
+    assert.deepEqual(r.value.rows, [["15s"]]);
     r = await call("select i from generate_series(1,1005) i");
     assert(!r.error, JSON.stringify(r.value));
     assert.equal(r.value.rows.length, 1000);
@@ -85,7 +89,7 @@ test(
       r = await call(sql);
       assert(r.error, sql);
     }
-    r = await call("select pg_sleep(0.3)");
+    r = await call("select pg_sleep(30)");
     assert(r.error);
     assert.equal(r.value.code, "QUERY_TIMEOUT");
     // Grants still prevent writes even after explicitly disabling read-only mode.
