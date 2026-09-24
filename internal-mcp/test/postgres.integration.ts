@@ -46,8 +46,7 @@ test(
       max: 5,
     });
     t.after(() => pool.end());
-    // Exercise the production timeout. A 100 ms test override can cancel the
-    // permission audit itself on a cold or contended CI runner.
+    // Ordinary queries use the production timeout, including on cold CI runners.
     const h = await harness({ database: new PostgresDatabase(pool) });
     t.after(h.close);
     const call = (sql: string, params?: unknown[]) =>
@@ -89,9 +88,27 @@ test(
       r = await call(sql);
       assert(r.error, sql);
     }
-    r = await call("select pg_sleep(30)");
-    assert(r.error);
-    assert.equal(r.value.code, "QUERY_TIMEOUT");
+    await t.test(
+      "cancels a slow query with a one-second timeout",
+      async (t) => {
+        const timeoutHarness = await harness({
+          database: new PostgresDatabase(pool, 1_000),
+        });
+        t.after(timeoutHarness.close);
+        // Verify the permission audit and an ordinary query succeed with this
+        // timeout before deliberately exercising cancellation through MCP.
+        const ready = await timeoutHarness.call("query", {
+          sql: "SHOW statement_timeout",
+        });
+        assert(!ready.error, JSON.stringify(ready.value));
+        assert.deepEqual(ready.value.rows, [["1s"]]);
+        const cancelled = await timeoutHarness.call("query", {
+          sql: "select pg_sleep(3)",
+        });
+        assert(cancelled.error);
+        assert.equal(cancelled.value.code, "QUERY_TIMEOUT");
+      },
+    );
     // Grants still prevent writes even after explicitly disabling read-only mode.
     const direct = await pool.connect();
     try {
