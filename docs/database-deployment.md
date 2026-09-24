@@ -43,4 +43,6 @@ Do not run synthetic write tests against production. Use the project dashboard o
 
 Automatic migration deployment should be added only after the live schema baseline and target project have been reconciled and deployment credentials configured. Historical numeric prefixes 016 and 017 each occur twice; do not rename already applied migrations without reconciling their history.
 
-The current GitHub publishing login cannot create workflow files because it lacks `workflow` scope. Until that is resolved, validation is local and required before each PR merge. There is no claim of GitHub CI or production deployment from these PRs.
+The GitHub Actions `Validate` workflow runs on pull requests and pushes to `main`, and can also be started manually from the Actions tab. Its `application` job runs UI helper tests, lint, and a production build; its `database` job replays the schema and runs the database regression suites in a disposable container. It uses placeholder public Supabase settings and no production credentials. It does not deploy the app or apply production migrations.
+
+Repository administrators can require the `application` and `database` checks to pass before merging by configuring branch protection for `main`. Publishing the workflow alone does not enforce that merge requirement.
