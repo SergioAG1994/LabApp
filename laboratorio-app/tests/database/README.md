@@ -7,3 +7,5 @@ The runner creates a fresh PostgreSQL container with networking disabled, no exp
 The container and its anonymous volumes are removed on completion or failure. No production credentials are needed or read. These tests exercise PostgreSQL permissions and application functions; they do not simulate the hosted Auth service, PostgREST, or a production migration baseline.
 
 The Database migrations GitHub Actions workflow runs this harness on database pull requests and before production deployment. For production configuration and the one-time migration baseline, see [the migration guide](../../supabase/README.md). The test runner validates changes but does not deploy them.
+
+The GitHub Actions `Validate` workflow also runs this harness on pull requests and pushes to `main`. A separate application job runs UI helper tests, lint, and a production build with placeholder public Supabase settings. Both jobs use standard Ubuntu runners and need no repository secrets. For equivalent local application checks, run `node --test tests/ui/*.test.mjs`, `npm run lint`, and `npm run build` from `laboratorio-app` with Node 22.18+.

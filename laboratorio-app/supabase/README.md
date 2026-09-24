@@ -41,7 +41,7 @@ No production history repair or schema changes happen as part of opening this PR
    in Git. Verify schema objects, function definitions, and data changes against
    the SQL and the team's deployment records. If older migration records already
    exist under different IDs, reconcile those IDs before proceeding. A fresh,
-   empty Supabase project needs no repair: all 43 files should be pending.
+   empty Supabase project needs no repair: all 46 files should be pending.
 
 3. Review the resulting history and pending SQL:
 
@@ -152,6 +152,9 @@ previous duplicate `016` and `017` prefixes are no longer migration IDs.
 | `039_staff_sample_analysis.sql` | `20260722000041` |
 | `040_save_custom_analysis_package.sql` | `20260722000042` |
 | `041_access_and_issued_protection.sql` | `20260722000043` |
+| `042_references_and_numbering.sql` | `20260722000044` |
+| `043_staff_and_audit.sql` | `20260722000045` |
+| `044_structured_results.sql` | `20260722000046` |
 
 See Supabase's [migration guide](https://supabase.com/docs/guides/deployment/database-migrations)
 and [CI deployment guide](https://supabase.com/docs/guides/deployment/managing-environments).

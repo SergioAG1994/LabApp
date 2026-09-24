@@ -14,6 +14,7 @@ type PreviewEntry = {
   clientContact?: string | null;
   samplingNumber: string;
   sampler: string;
+  samplerStaffId?: string | null;
   quotation: string;
   received: string;
   due: string;
@@ -32,6 +33,7 @@ type PreviewRow = {
   analyst_reference: string | null;
   result_date: string | null;
   analyst_name: string | null;
+  analyst_staff_id?: string | null;
   par_form: string | null;
   method_reference: string | null;
 };
@@ -138,33 +140,24 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
     return () => { active = false; };
   }, []);
 
-  const analysts = useMemo(() => [...new Set(rows.map((row) => row.analyst_name?.trim()).filter(Boolean) as string[])], [rows]);
-  const samplerFullName = useMemo(() => {
-    const reference = entry.sampler.trim();
-    const normalizedReference = reference.toLocaleUpperCase();
-    return laboratoryStaff.find((person) => person.initials.trim().toLocaleUpperCase() === normalizedReference)?.full_name
-      || laboratoryStaff.find((person) => person.full_name.trim().toLocaleLowerCase() === reference.toLocaleLowerCase())?.full_name
-      || entry.sampler;
-  }, [entry.sampler, laboratoryStaff]);
+  const samplerFullName = useMemo(() =>
+    laboratoryStaff.find((person) => person.id === entry.samplerStaffId)?.full_name || entry.sampler,
+  [entry.sampler, entry.samplerStaffId, laboratoryStaff]);
   const responsiblePeople = useMemo(() => {
     const people = new Map<string, ResponsiblePerson>();
-    const findStaff = (reference: string) => {
-      const normalizedReference = reference.trim().toLocaleUpperCase();
-      return laboratoryStaff.find((person) => person.initials.trim().toLocaleUpperCase() === normalizedReference)
-        || laboratoryStaff.find((person) => person.full_name.trim().toLocaleLowerCase() === reference.trim().toLocaleLowerCase());
-    };
-    const addPerson = (reference: string) => {
-      const staffMember = findStaff(reference);
+    const addPerson = (reference: string, id?: string | null) => {
+      // Unlinked historical text can be ambiguous; display it without guessing.
+      const staffMember = id ? laboratoryStaff.find((person) => person.id === id) : undefined;
       const fullName = staffMember?.full_name || reference;
       const initials = staffMember?.initials || reference;
-      const key = staffMember?.id || `${fullName}-${initials}`;
-      if (people.has(key)) return;
+      const key = staffMember?.id || `legacy-${reference}`;
+      if (!reference && !staffMember || people.has(key)) return;
       people.set(key, { key, fullName, initials, positionTitle: staffMember?.position_title || "Sin puesto registrado" });
     };
-    analysts.forEach(addPerson);
-    if (laboratorySampled && entry.sampler.trim()) addPerson(entry.sampler);
+    rows.forEach((row) => addPerson(row.analyst_name || "", row.analyst_staff_id));
+    if (laboratorySampled) addPerson(entry.sampler, entry.samplerStaffId);
     return [...people.values()];
-  }, [analysts, entry.sampler, laboratorySampled, laboratoryStaff]);
+  }, [rows, entry.sampler, entry.samplerStaffId, laboratorySampled, laboratoryStaff]);
   const firstPageRows = resultPages[0] || [];
   const continuationPages = resultPages.slice(1);
   const totalPages = 3 + continuationPages.length;
@@ -316,7 +309,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
           <div className="report-sample-fields"><label><b>Identificación de la muestra:</b><input value={sampleIdentification} onChange={(event) => setSampleIdentification(event.target.value)} placeholder="Captura manual" disabled={readOnly} /></label><label><b>Solicita:</b><input value={requestedBy} onChange={(event) => setRequestedBy(event.target.value)} placeholder="Nombre de quien solicita" disabled={readOnly} /></label></div>
           <h3>Resultados de análisis</h3>
           </div>
-          <ResultsTable rows={firstPageRows} />
+          <ResultsTable laboratoryStaff={laboratoryStaff} rows={firstPageRows} />
           <ReportFooter page={1} totalPages={totalPages} />
         </section>
 
@@ -326,7 +319,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
             <ReportHeader page={pageNumber} totalPages={totalPages} reportNumber={entry.reportNumber} />
             <div className="report-title">INFORME DE RESULTADOS</div>
             <h3>Resultados de análisis — continuación</h3>
-            <ResultsTable rows={pageRows} />
+            <ResultsTable laboratoryStaff={laboratoryStaff} rows={pageRows} />
             {packSampleDetailsAfterResults && index === continuationPages.length - 1 && sampleDetails}
             <ReportFooter page={pageNumber} totalPages={totalPages} />
           </section>;
@@ -356,15 +349,15 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
       </main>
       <div className="report-pagination-measure" aria-hidden="true">
         <div ref={continuationFixedRef}><ReportHeader page={2} totalPages={totalPages} reportNumber={entry.reportNumber} /><div className="report-title">INFORME DE RESULTADOS</div><h3>Resultados de análisis — continuación</h3></div>
-        <div ref={rowMeasurementRef}><ResultsTable rows={rows} /></div>
+        <div ref={rowMeasurementRef}><ResultsTable laboratoryStaff={laboratoryStaff} rows={rows} /></div>
       </div>
     </div>
   </div>;
 }
 
-function ResultsTable({ rows }: { rows: PreviewRow[] }) {
+function ResultsTable({ rows, laboratoryStaff }: { rows: PreviewRow[]; laboratoryStaff: LaboratoryStaff[] }) {
   return <table className="report-table report-results-table"><thead><tr><th>Parámetro</th><th className="report-result-heading">Resultado</th><th>Unidades</th><th>Método</th><th>Analista</th><th>Fecha de análisis</th></tr></thead><tbody>
-    {rows.map((row) => <tr key={row.id}><td>{row.par_form || row.label}</td><td>{row.result_value || "—"}</td><td>{row.unit || "—"}</td><td>{row.method_reference || "—"}</td><td>{row.analyst_name || "—"}</td><td>{row.result_date ? numericDate(new Date(`${row.result_date}T12:00:00`)) : "—"}</td></tr>)}
+    {rows.map((row) => <tr key={row.id}><td>{row.par_form || row.label}</td><td>{row.result_value || "—"}</td><td>{row.unit || "—"}</td><td>{row.method_reference || "—"}</td><td>{laboratoryStaff.find((person) => person.id === row.analyst_staff_id)?.initials || row.analyst_name || "—"}</td><td>{row.result_date ? numericDate(new Date(`${row.result_date}T12:00:00`)) : "—"}</td></tr>)}
   </tbody></table>;
 }
 
