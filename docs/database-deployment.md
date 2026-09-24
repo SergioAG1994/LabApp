@@ -1,13 +1,13 @@
 # Deploying the database improvements
 
-Merging these PRs updates application code and SQL source. It does not apply SQL to the hosted Supabase database. No production migration runner is configured. Do not replay all historical scripts against an existing database.
+Database changes now live in `laboratorio-app/supabase/migrations/`. The `Database migrations` workflow applies pending SQL after relevant merges to `main`, once the target project, credentials, and migration baseline are configured. Until that setup is complete, its production job fails before connecting. Follow the [one-time migration setup](../laboratorio-app/supabase/README.md); do not replay already-applied historical scripts against an existing database.
 
 ## Before production changes
 
 1. Confirm the intended Supabase project and whether its schema already includes the repository's historical changes through 040. The local test runner proves a fresh replay, not the state of that project.
 2. Inspect the live functions, policies, tables, and migration history for manual changes. Resolve differences before applying new migrations.
 3. Take a verified backup/recovery point using the project's existing backup process. Rehearse the upgrade on a nonproduction copy with representative legacy records.
-4. Apply the new scripts in ascending filename order, once each. Their transaction boundaries keep a failed change from being partially installed. A failed legacy-data check needs investigation; do not disable it or guess which existing record is correct.
+4. Review `supabase db push --linked --dry-run`, then let the configured merge workflow apply pending migrations in version order, once each. Their transaction boundaries keep a failed change from being partially installed. A failed legacy-data check needs investigation; do not disable it or guess which existing record is correct.
 5. Deploy the matching application revision, then verify the staff workflows below. Keep the database and application rollout coordinated even when an individual UI change includes a narrow compatibility fallback.
 
 ## Included changes
@@ -41,7 +41,7 @@ Do not run synthetic write tests against production. Use the project dashboard o
 
 ## Automation
 
-Automatic migration deployment should be added only after the live schema baseline and target project have been reconciled and deployment credentials configured. Historical numeric prefixes 016 and 017 each occur twice; do not rename already applied migrations without reconciling their history.
+The `Database migrations` workflow requires the live schema baseline, target project, and deployment credentials to be configured before production runs can succeed. All historical SQL has unique timestamp versions; use the [legacy version map](../laboratorio-app/supabase/README.md#legacy-version-map) to reconcile already-applied SQL with migration history. The original filenames below are retained as migration filename suffixes.
 
 The GitHub Actions `Validate` workflow runs on pull requests and pushes to `main`, and can also be started manually from the Actions tab. Its `application` job runs UI helper tests, lint, and a production build; its `database` job replays the schema and runs the database regression suites in a disposable container. It uses placeholder public Supabase settings and no production credentials. It does not deploy the app or apply production migrations.
 

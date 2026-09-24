@@ -8,8 +8,8 @@ def test(_db):
     app = harness['APP']
     with harness['Database']() as db:
         db.sql(harness['BOOTSTRAP'])
-        for migration in [app / 'supabase/schema.sql', *sorted((app / 'supabase').glob('[0-9]*.sql'))]:
-            if migration.name.startswith('043_'):
+        for migration in sorted((app / 'supabase/migrations').glob('[0-9]*.sql')):
+            if migration.name == '20260722000045_043_staff_and_audit.sql':
                 break
             db.sql(migration.read_text())
         db.sql("""
@@ -27,7 +27,7 @@ def test(_db):
           select public.issue_report((select id from public.analysis_orders where op_number='28801001'),'0043');
         """)
         audit_before = db.sql('select count(*) from public.audit_events;').stdout.strip()
-        db.sql((app / 'supabase/043_staff_and_audit.sql').read_text())
+        db.sql((app / 'supabase/migrations/20260722000045_043_staff_and_audit.sql').read_text())
         assert db.sql('select count(*) from public.audit_events;').stdout.strip() == audit_before, 'backfill polluted activity history'
         assert db.sql("select analyst_staff_id::text||':'||(released_by_staff_id is null)::text||':'||analyst_name||':'||released_by from public.analysis_results;").stdout.strip() == '43200000-0000-0000-0000-000000000010:true: rp :Shared Name'
         assert db.sql("select sampler_staff_id::text||':'||sampler_name||':'||status from public.analysis_orders;").stdout.strip() == '43200000-0000-0000-0000-000000000010:Retired Person:informe_emitido'

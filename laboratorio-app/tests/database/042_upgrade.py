@@ -8,8 +8,8 @@ def test(_db):
     app = harness['APP']
     with harness['Database']() as db:
         db.sql(harness['BOOTSTRAP'])
-        for migration in [app / 'supabase/schema.sql', *sorted((app / 'supabase').glob('[0-9]*.sql'))]:
-            if migration.name.startswith('042_'):
+        for migration in sorted((app / 'supabase/migrations').glob('[0-9]*.sql')):
+            if migration.name == '20260722000044_042_references_and_numbering.sql':
                 break
             db.sql(migration.read_text())
         db.sql("""
@@ -26,7 +26,7 @@ def test(_db):
             ('42000000-0000-0000-0000-000000000030','42000000-0000-0000-0000-000000000011','42000000-0000-0000-0000-000000000020');
           insert into public.reports(order_id,report_number,report_year) values('42000000-0000-0000-0000-000000000010','0600',2083);
         """)
-        sql = (app / 'supabase/042_references_and_numbering.sql').read_text()
+        sql = (app / 'supabase/migrations/20260722000044_042_references_and_numbering.sql').read_text()
         failure = db.sql(sql, check=False)
         assert failure.returncode != 0 and '42000000-0000-0000-0000-000000000030' in failure.stderr, failure.stderr
         assert db.sql("select to_regclass('public.document_counters') is null;").stdout.strip() == 't', 'failed migration partially applied'

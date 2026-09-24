@@ -8,8 +8,8 @@ def test(_db):
     app = harness['APP']
     with harness['Database']() as db:
         db.sql(harness['BOOTSTRAP'])
-        for migration in [app / 'supabase/schema.sql', *sorted((app / 'supabase').glob('[0-9]*.sql'))]:
-            if migration.name.startswith('044_'):
+        for migration in sorted((app / 'supabase/migrations').glob('[0-9]*.sql')):
+            if migration.name == '20260722000046_044_structured_results.sql':
                 break
             db.sql(migration.read_text())
         db.sql("""
@@ -28,7 +28,7 @@ def test(_db):
         history_before = db.sql('select jsonb_agg(to_jsonb(a) order by id) from public.audit_events a;').stdout
         worksheets_before = db.sql('select jsonb_agg(to_jsonb(w) order by id) from public.analysis_worksheets w;').stdout
         reports_before = db.sql('select jsonb_agg(to_jsonb(r) order by id) from public.reports r;').stdout
-        db.sql((app / 'supabase/044_structured_results.sql').read_text())
+        db.sql((app / 'supabase/migrations/20260722000046_044_structured_results.sql').read_text())
         assert db.sql("select jsonb_agg(to_jsonb(r)-array['result_input_kind','result_type','result_numeric','result_qualifier','result_text'] order by id) from public.analysis_results r;").stdout == results_before, 'backfill modified historical columns'
         assert db.sql('select jsonb_agg(to_jsonb(a) order by id) from public.audit_events a;').stdout == history_before, 'backfill polluted activity history'
         assert db.sql('select jsonb_agg(to_jsonb(w) order by id) from public.analysis_worksheets w;').stdout == worksheets_before, 'backfill changed worksheet revisions/timestamps'
