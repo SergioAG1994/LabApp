@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'laboratorio-app/supabase/**'
+      - 'laboratorio-app/tests/database/**'
       - '.github/workflows/database-migrations.yml'
   push:
     branches: [main]
     paths:
       - 'laboratorio-app/supabase/**'
+      - 'laboratorio-app/tests/database/**'
       - '.github/workflows/database-migrations.yml'
   workflow_dispatch:
 
@@ -28,9 +30,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1
-        with:
-          version: 2.117.0
       - name: Check migration names and versions
         run: |
           python3 - <<'PY'
@@ -49,13 +48,10 @@ jobs:
           if list(Path('supabase').glob('*.sql')):
               raise SystemExit('Put SQL changes in supabase/migrations, not supabase/')
           PY
-      - name: Apply migrations to a disposable database
+      - name: Replay migrations and run database regression tests
         run: |
-          supabase db start
-          supabase db reset --local --no-seed
-      - name: Stop local database
-        if: always()
-        run: supabase stop --no-backup
+          docker pull supabase/postgres:17.4.1.074
+          python3 tests/database/run.py
 
   deploy:
     name: Apply production migrations

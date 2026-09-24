@@ -91,7 +91,9 @@ end $$;
 def main():
     with Database() as db:
         db.sql(BOOTSTRAP)
-        migrations = [APP / "supabase/schema.sql", *sorted((APP / "supabase").glob("[0-9]*.sql"))]
+        migrations = sorted((APP / "supabase/migrations").glob("[0-9]*.sql"))
+        if not migrations:
+            raise RuntimeError("No versioned migrations found")
         for migration in migrations:
             db.sql(migration.read_text())
         print(f"PASS: replayed {len(migrations)} schema/migration files", flush=True)

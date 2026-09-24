@@ -1,8 +1,8 @@
 # Database migrations
 
 The `Database migrations` GitHub Actions workflow validates SQL on pull requests
-and applies pending migrations after changes under `laboratorio-app/supabase/`
-(or the workflow itself) reach `main`. Other application-only merges do not run it.
+and applies pending migrations after changes under `laboratorio-app/supabase/`,
+database tests, or the workflow itself reach `main`. Other application-only merges do not run it.
 A manual run from the Actions tab can retry deployment; only `main` can deploy.
 Production jobs run one at a time and do not cancel an in-progress migration.
 Supabase records applied versions, so successful migrations are skipped on retry.
@@ -41,7 +41,7 @@ No production history repair or schema changes happen as part of opening this PR
    in Git. Verify schema objects, function definitions, and data changes against
    the SQL and the team's deployment records. If older migration records already
    exist under different IDs, reconcile those IDs before proceeding. A fresh,
-   empty Supabase project needs no repair: all 42 files should be pending.
+   empty Supabase project needs no repair: all 43 files should be pending.
 
 3. Review the resulting history and pending SQL:
 
@@ -89,7 +89,8 @@ Commit the generated file and open a PR. Use a unique timestamp greater than the
 latest migration on `main`; rebase and adjust an unmerged timestamp if needed.
 Do not edit, delete, or renumber migrations after they have deployed. Make further
 changes in a new migration. The PR workflow rejects invalid/duplicate versions
-and applies the full history to a disposable database without production secrets.
+and applies the full history to a disposable database without production secrets,
+then runs the existing role/access and concurrency regression tests.
 
 The CLI applies SQL in version order. A failure stops deployment; previously
 successful files remain recorded. Inspect the failed SQL and database state before
@@ -150,6 +151,7 @@ previous duplicate `016` and `017` prefixes are no longer migration IDs.
 | `038_laboratory_staff.sql` | `20260722000040` |
 | `039_staff_sample_analysis.sql` | `20260722000041` |
 | `040_save_custom_analysis_package.sql` | `20260722000042` |
+| `041_access_and_issued_protection.sql` | `20260722000043` |
 
 See Supabase's [migration guide](https://supabase.com/docs/guides/deployment/database-migrations)
 and [CI deployment guide](https://supabase.com/docs/guides/deployment/managing-environments).
