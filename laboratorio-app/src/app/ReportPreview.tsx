@@ -310,7 +310,7 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
             <div className="report-client-row"><b>RFC:</b><span>{entry.clientRfc || "—"}</span></div>
           </div>
           <div className="report-metadata-stack">
-            <div className="report-metadata-box"><div><b>Número de informe:</b><span>BORRADOR</span></div><div><b>Fecha de informe:</b><span>{numericDate(new Date())}</span></div><div><b>Fecha recepción de muestra:</b><span>{entry.received}</span></div></div>
+            <div className="report-metadata-box"><div><b>Número de informe:</b><span>{entry.reportNumber || "BORRADOR"}</span></div><div><b>Fecha de informe:</b><span>{numericDate(new Date())}</span></div><div><b>Fecha recepción de muestra:</b><span>{entry.received}</span></div></div>
             <div className="report-metadata-box report-references"><strong>Referencias</strong><div><b>OP:</b><span>{entry.op}</span></div><div><b>No. muestra:</b><span>{entry.sampleNumber}</span></div><div><b>Cotización:</b><span>{entry.quotation && entry.quotation !== "—" ? entry.quotation : "N/A"}</span></div><div><b>Muestreo:</b><span>{entry.samplingNumber && entry.samplingNumber !== "—" ? entry.samplingNumber : "N/A"}</span></div></div>
           </div>
           <div className="report-sample-fields"><label><b>Identificación de la muestra:</b><input value={sampleIdentification} onChange={(event) => setSampleIdentification(event.target.value)} placeholder="Captura manual" disabled={readOnly} /></label><label><b>Solicita:</b><input value={requestedBy} onChange={(event) => setRequestedBy(event.target.value)} placeholder="Nombre de quien solicita" disabled={readOnly} /></label></div>
