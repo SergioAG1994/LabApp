@@ -6,6 +6,10 @@ import { MultiSampleOrderForm } from "./MultiSampleOrderForm";
 import { ParameterDirectory } from "./ParameterDirectory";
 import { PersonnelDirectory } from "./PersonnelDirectory";
 import { ReportPreview } from "./ReportPreview";
+import { StaffAssignment } from "./StaffAssignment";
+import { ResultValueEditor } from "./ResultValueEditor";
+import { resultValidationError, resultWriteFields, type ResultInputKind } from "@/lib/result-values";
+import { loadWorksheetColumns, missingStaffColumns, staffDisplayName, type LaboratoryStaff } from "@/lib/staff-attribution";
 type Entry = {
     id: string;
     op: string;
@@ -17,6 +21,7 @@ type Entry = {
     clientContact?: string | null;
     samplingNumber: string;
     sampler: string;
+    samplerStaffId?: string | null;
     quotation: string;
     received: string;
     due: string;
@@ -44,10 +49,13 @@ type OrderRow = {
     row_type: "result" | "aggregate";
     uncertainty: string | null;
     result_value: string | null;
+    result_input_kind?: ResultInputKind;
     analyst_reference: string | null;
     result_date: string | null;
     analyst_name: string | null;
     released_by: string | null;
+    analyst_staff_id?: string | null;
+    released_by_staff_id?: string | null;
     par_form: string | null;
     method_reference: string | null;
 };
@@ -87,23 +95,19 @@ type IssuedReport = {
 const dash = "—";
 const reactSidebarEnabled = true;
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value.slice(0, 10)}T12:00:00`)) : dash;
+function sampleConsecutive(sampleNumber: string) {
+    return sampleNumber.match(/-(\d{4})$/)?.[1] || null;
+}
+function uncertaintyIsNotApplicable(label: string) {
+    const normalized = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    return normalized === "mf" || normalized.includes("materia flotante") || normalized.startsWith("col fec") || normalized.startsWith("col tot") || normalized.startsWith("e. coli") || normalized.includes("e coli") || normalized === "hh" || normalized.includes("huevo de helminto");
+}
 function isPastDueDate(value: string | null) {
-    if (!value)
-        return false;
+    if (!value) return false;
     const dueDate = new Date(`${value.slice(0, 10)}T12:00:00`);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return dueDate < today;
-}
-function uncertaintyIsNotApplicable(label: string) {
-    const normalized = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-    return normalized === "mf" || normalized.includes("materia flotante") ||
-        normalized.startsWith("col fec") || normalized.startsWith("col tot") ||
-        normalized.startsWith("e. coli") || normalized.includes("e coli") ||
-        normalized === "hh" || normalized.includes("huevo de helminto");
-}
-function sampleConsecutive(sampleNumber: string) {
-    return sampleNumber.match(/-(\d{4})$/)?.[1] || null;
 }
 export default function Home() {
     const [session, setSession] = useState<Session | null>(null);
@@ -124,6 +128,12 @@ export default function Home() {
     const [runningOrderActionId, setRunningOrderActionId] = useState<string | null>(null);
     const [selected, setSelected] = useState<Entry | null>(null);
     const [orderRows, setOrderRows] = useState<OrderRow[]>([]);
+    const [laboratoryStaff, setLaboratoryStaff] = useState<LaboratoryStaff[]>([]);
+    const [worksheetRevision, setWorksheetRevision] = useState<number | null>(null);
+    const [legacyWorksheet, setLegacyWorksheet] = useState(false);
+    const [structuredResults, setStructuredResults] = useState(false);
+    const [worksheetLoading, setWorksheetLoading] = useState(false);
+    const sampleLoadId = useRef(0);
     const [sampledInput, setSampledInput] = useState("");
     const [savingOrder, setSavingOrder] = useState(false);
     const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
@@ -167,13 +177,16 @@ export default function Home() {
     const [parameterDirectoryMode, setParameterDirectoryMode] = useState<"list" | "create">("list");
     const [personnelSubnavVisible] = useState(false);
     const [personnelDirectoryMode, setPersonnelDirectoryMode] = useState<"list" | "create">("list");
-    const [analystInitials, setAnalystInitials] = useState<string[]>([]);
     const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
     const [sampleQuery, setSampleQuery] = useState("");
     const [reportQuery, setReportQuery] = useState("");
     const [reportYear, setReportYear] = useState("all");
     async function loadEntries() {
-        const { data, error } = await supabase.from("analysis_orders").select("id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name, branch, address, rfc, phone, contact_name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_label, analysis_packages(code, name))").order("created_at", { ascending: false });
+        const entryColumns = "id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name, branch, address, rfc, phone, contact_name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_label, analysis_packages(code, name))";
+        const currentResult = await supabase.from("analysis_orders").select(`${entryColumns}, sampler_staff_id`).order("created_at", { ascending: false });
+        const { data, error } = missingStaffColumns(currentResult.error)
+            ? await supabase.from("analysis_orders").select(entryColumns).order("created_at", { ascending: false })
+            : currentResult;
         if (error || !data)
             return;
         setEntries(data.flatMap((item) => {
@@ -190,7 +203,7 @@ export default function Home() {
                     code?: string;
                     name?: string;
                 } | null;
-                return { id: item.id, op: item.op_number, client: clientData?.name || dash, clientBranch: clientData?.branch, clientAddress: clientData?.address, clientRfc: clientData?.rfc, clientPhone: clientData?.phone, clientContact: clientData?.contact_name, samplingNumber: sample.sampling_number || dash, sampler: item.sampler_name || dash, quotation: item.quotation_number || dash, received: formatDate(item.received_at), due: formatDate(item.due_date), reportNumber: item.report_number || "", analysis: sample.analysis_label || packageData?.name || packageData?.code || dash, sampleNumber: sample.sample_code, sampleId: sample.id, analysisOrderCreatedAt: sample.analysis_order_created_at || null, sampledAt: item.sampled_at || null, issuedAt: item.issued_at || null, isCancelled: item.status === "cancelada", status: item.status };
+                return { id: item.id, op: item.op_number, client: clientData?.name || dash, clientBranch: clientData?.branch, clientAddress: clientData?.address, clientRfc: clientData?.rfc, clientPhone: clientData?.phone, clientContact: clientData?.contact_name, samplingNumber: sample.sampling_number || dash, sampler: item.sampler_name || dash, samplerStaffId: "sampler_staff_id" in item ? item.sampler_staff_id as string | null : null, quotation: item.quotation_number || dash, received: formatDate(item.received_at), due: formatDate(item.due_date), reportNumber: item.report_number || "", analysis: sample.analysis_label || packageData?.name || packageData?.code || dash, sampleNumber: sample.sample_code, sampleId: sample.id, analysisOrderCreatedAt: sample.analysis_order_created_at || null, sampledAt: item.sampled_at || null, issuedAt: item.issued_at || null, isCancelled: item.status === "cancelada", status: item.status };
             });
         }));
     }
@@ -227,15 +240,6 @@ export default function Home() {
         const { data, error } = await supabase.rpc("list_staff_samples");
         if (!error && data) setStaffSamples(data as StaffSample[]);
     }
-    async function loadAnalystInitials() {
-        const { data, error } = await supabase.from("laboratory_staff")
-            .select("initials")
-            .eq("active", true)
-            .overlaps("functions", ["analista", "muestreador"])
-            .order("initials");
-        if (!error && data)
-            setAnalystInitials(data.map((staff) => staff.initials.trim().toUpperCase()).filter(Boolean));
-    }
     useEffect(() => {
         if (reactSidebarEnabled) return;
         if (!session) return;
@@ -271,7 +275,7 @@ export default function Home() {
         return () => window.removeEventListener("click", closeMenus);
     }, [openOrderActionMenuId, openClientActionMenuId]);
     useEffect(() => { if (!session)
-        return; const timer = window.setTimeout(() => { void loadEntries(); void loadAnalystInitials(); }, 0); return () => window.clearTimeout(timer); }, [session]);
+        return; const timer = window.setTimeout(() => { void loadEntries(); }, 0); return () => window.clearTimeout(timer); }, [session]);
     useEffect(() => {
         if (reactSidebarEnabled) return;
         if (!session || userRole === "analista" || view === "clients") return;
@@ -531,10 +535,38 @@ export default function Home() {
     }, [issuedReports, reportQuery, reportYear]);
     const worksheetLocked = selected?.status === "informe_emitido" || Boolean(selected?.reportNumber || selected?.issuedAt);
     async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = authMode === "login" ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } }); setAuthMessage(result.error ? result.error.message : authMode === "login" ? "Acceso correcto." : "Cuenta creada. Revisa tu correo para confirmarla."); setAuthLoading(false); }
-    async function openSample(entry: Entry) { setSelected(entry); setExportConfirmOpen(false); setReportPreviewOpen(false); setReportListPreview(false); setSampledInput(entry.sampledAt || ""); setOrderRows([]); if (!entry.sampleId)
-        return; const { data } = await supabase.from("worksheet_results").select("id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order, par_form, method_reference").eq("sample_id", entry.sampleId).order("display_order"); setOrderRows((data || []).map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]); }
+    async function openSample(entry: Entry) {
+        const loadId = ++sampleLoadId.current;
+        setSelected(entry); setExportConfirmOpen(false); setReportPreviewOpen(false); setReportListPreview(false);
+        setSampledInput(entry.sampledAt || ""); setOrderRows([]); setWorksheetRevision(null); setLegacyWorksheet(false); setStructuredResults(false); setWorksheetLoading(true);
+        const columns = "id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order, par_form, method_reference";
+        const [worksheet, staffResult] = await Promise.all([
+            loadWorksheetColumns(({ staff, structured }) => supabase.from("worksheet_results")
+                .select(`${columns}${staff ? ", analyst_staff_id, released_by_staff_id, worksheet_revision, worksheet_sampled_at" : ""}${structured ? ", result_input_kind, result_type, result_numeric, result_qualifier, result_text" : ""}`)
+                .eq("sample_id", entry.sampleId).order("display_order")),
+            supabase.from("laboratory_staff").select("id, full_name, initials, functions, active").order("full_name"),
+        ]);
+        const { result, legacyWorksheet: legacy } = worksheet;
+        if (loadId !== sampleLoadId.current) return false;
+        setWorksheetLoading(false);
+        if (result.error || staffResult.error) {
+            window.alert(`No se pudo cargar la orden: ${result.error?.message || staffResult.error?.message}`);
+            return false;
+        }
+        setLaboratoryStaff((staffResult.data || []) as LaboratoryStaff[]);
+        setLegacyWorksheet(legacy);
+        setStructuredResults(worksheet.structuredResults);
+        const rows = (result.data || []) as unknown as (OrderRow & { analyzed_at: string | null })[];
+        if (!legacy && rows.length) {
+            const first = rows[0] as unknown as { worksheet_revision: number; worksheet_sampled_at: string | null };
+            setWorksheetRevision(first.worksheet_revision);
+            setSampledInput(first.worksheet_sampled_at || "");
+        }
+        setOrderRows(rows.map((row) => ({ ...row, result_date: row.analyzed_at })) as OrderRow[]);
+        return true;
+    }
     async function openIssuedReport(report: IssuedReport) {
-        await openSample(report.entry);
+        if (!(await openSample(report.entry))) return;
         setReportListPreview(true);
         setReportPreviewOpen(true);
     }
@@ -550,11 +582,49 @@ export default function Home() {
     function updateRow(id: string, patch: Partial<OrderRow>) { setOrderRows((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row)); }
     function syncHorizontalScroll(source: "table" | "bottom", scrollLeft: number) { const target = source === "table" ? orderBottomScrollRef.current : orderTableRef.current; if (target && Math.abs(target.scrollLeft - scrollLeft) > 1)
         target.scrollLeft = scrollLeft; }
-    async function saveAnalysisOrder() { if (!selected)
-        return; setSavingOrder(true); const dateResult = userRole === "analista" ? { error: null } : await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const results = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty === "" ? null : row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date || null, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); setSavingOrder(false); const error = dateResult.error || results.find((result) => result.error)?.error; if (error) {
-        window.alert(`No se pudo guardar la orden: ${error.message}`);
-        return;
-    } if (view === "samples") await loadStaffSamples(); else await loadEntries(); setSelected({ ...selected, sampledAt: sampledInput || null }); window.alert("Orden de análisis guardada."); }
+    async function persistWorksheet() {
+        if (!selected || worksheetLoading || !orderRows.length) return { message: "Espera a que termine de cargar la orden." };
+        const invalid = orderRows.find((row) => resultValidationError(row));
+        if (invalid) return { message: `${invalid.label}: ${resultValidationError(invalid)}` };
+        const rows = orderRows.map((row) => ({
+            id: row.id, uncertainty: row.uncertainty === "" ? null : row.uncertainty,
+            ...resultWriteFields(row, structuredResults), analyst_reference: row.analyst_reference?.trim() || null,
+            analyzed_at: row.result_date || null, analyst_name: row.analyst_name || null, released_by: row.released_by || null,
+            analyst_staff_id: row.analyst_staff_id || null, released_by_staff_id: row.released_by_staff_id || null,
+        }));
+        if (!legacyWorksheet) {
+            if (worksheetRevision === null) return { message: "Cierra y vuelve a abrir la orden para cargar su versión actual." };
+            const { data, error } = await supabase.rpc("save_analysis_worksheet", {
+                p_sample_id: selected.sampleId, p_expected_revision: worksheetRevision, p_rows: rows,
+                ...(userRole !== "analista" ? { p_sampled_at: sampledInput || null } : {}),
+            });
+            if (error) return error;
+            setWorksheetRevision(data as number);
+            return null;
+        }
+        // Compatibility only for a database confirmed to lack migration 043.
+        const dateResult = userRole === "analista" ? { error: null } : await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id);
+        if (dateResult.error) return dateResult.error;
+        const results = await Promise.all(rows.map(({ id, analyst_staff_id: _analystId, released_by_staff_id: _reviewerId, ...values }) => {
+            void _analystId; void _reviewerId;
+            return supabase.from("analysis_results").update(values).eq("id", id);
+        }));
+        return results.find((result) => result.error)?.error || null;
+    }
+    function showWorksheetSaveError(error: { message: string; code?: string }) {
+        const stale = error.code === "40001" || /stale|revision|versi[oó]n|concurrent/i.test(error.message);
+        window.alert(stale ? "Otra persona modificó esta orden. Tus cambios siguen en pantalla y no se guardaron. Copia los cambios que quieras conservar, cierra la orden y vuelve a abrirla para revisar la versión actual antes de guardar." : `No se pudo guardar la orden: ${error.message}`);
+    }
+    async function saveAnalysisOrder() {
+        if (!selected || savingOrder || exportingReport) return;
+        setSavingOrder(true);
+        const error = await persistWorksheet();
+        setSavingOrder(false);
+        if (error) { showWorksheetSaveError(error); return; }
+        if (view === "samples") await loadStaffSamples(); else await loadEntries();
+        setSelected({ ...selected, sampledAt: sampledInput || null });
+        window.alert("Orden de análisis guardada.");
+    }
     function requestReportExport() {
         if (!selected || orderRows.length === 0) {
             window.alert("La OA no contiene parámetros para exportar.");
@@ -565,6 +635,8 @@ export default function Home() {
         orderRows.forEach((row) => {
             const missing = [!uncertaintyIsNotApplicable(row.label) && (row.uncertainty === null || row.uncertainty === "") ? "incertidumbre" : "", !row.result_value?.trim() ? "resultado" : "", !row.analyst_reference?.trim() ? "referencia" : "", !row.result_date ? "fecha" : "", !row.analyst_name?.trim() ? "analista" : "", !row.released_by?.trim() ? "libera" : ""].filter(Boolean);
             if (missing.length) missingFields.push(`${row.label}: ${missing.join(", ")}`);
+            const resultError = resultValidationError(row);
+            if (resultError) missingFields.push(`${row.label}: ${resultError}`);
         });
         if (missingFields.length) {
             window.alert(`Hace falta llenar la OA completamente:\n\n${missingFields.slice(0, 8).join("\n")}${missingFields.length > 8 ? `\n…y ${missingFields.length - 8} campo(s) más.` : ""}`);
@@ -573,12 +645,15 @@ export default function Home() {
         setExportConfirmOpen(false);
         setReportPreviewOpen(true);
     }
-    async function issueReportFromWorksheet() { if (!selected || !worksheetComplete)
-        return; setExportingReport(true); const dateResult = await supabase.from("analysis_orders").update({ sampled_at: sampledInput || null }).eq("id", selected.id); const resultUpdates = await Promise.all(orderRows.map((row) => supabase.from("analysis_results").update({ uncertainty: row.uncertainty, result_value: row.result_value?.trim() || null, analyst_reference: row.analyst_reference?.trim() || null, analyzed_at: row.result_date, analyst_name: row.analyst_name?.trim().toUpperCase() || null, released_by: row.released_by?.trim().toUpperCase() || null, updated_at: new Date().toISOString() }).eq("id", row.id))); const saveError = dateResult.error || resultUpdates.find((result) => result.error)?.error; if (saveError) {
-        setExportingReport(false);
-        window.alert(`No se pudo guardar la orden: ${saveError.message}`);
-        return;
-    } const { error } = await supabase.rpc("issue_report", { p_order_id: selected.id, p_report_number: null, p_pdf_path: null }); setExportingReport(false); if (error) {
+    async function issueReportFromWorksheet() {
+        if (!selected || !worksheetComplete || savingOrder || exportingReport) return;
+        setExportingReport(true);
+        const saveError = await persistWorksheet();
+        if (saveError) {
+            setExportingReport(false);
+            showWorksheetSaveError(saveError);
+            return;
+        } const { error } = await supabase.rpc("issue_report", { p_order_id: selected.id, p_report_number: null, p_pdf_path: null }); setExportingReport(false); if (error) {
         window.alert(`No se pudo emitir el informe: ${error.message}`);
         return;
     } setExportConfirmOpen(false); setReportPreviewOpen(false); window.alert("La orden de análisis se exportó a informe correctamente."); setSelected(null); await loadEntries(); }
@@ -776,7 +851,7 @@ export default function Home() {
     return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{view === "personnel" && personnelDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}</header>
     {view === "samples" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Muestras</h2><p>{visibleStaffSamples.length} muestras encontradas</p></div><input type="search" value={sampleQuery} onChange={(event) => setSampleQuery(event.target.value)} placeholder="Buscar número de muestra" aria-label="Buscar por número de muestra" /></div>
-      <div className="table-wrap"><table className="intake-table" style={{ width: "980px", minWidth: "980px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Análisis</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={5}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras disponibles."}</td></tr> : visibleStaffSamples.map((sample) => { const rowState = sample.completion_percent >= 100 ? "sample-complete-row" : isPastDueDate(sample.due_date) ? "sample-overdue-row" : ""; return <tr className={rowState} key={sample.sample_id}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{sample.analysis_label}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>; })}</tbody></table></div>
+      <div className="table-wrap"><table className="intake-table" style={{ width: "980px", minWidth: "980px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Análisis</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={5}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras disponibles."}</td></tr> : visibleStaffSamples.map((sample) => <tr key={sample.sample_id} className={sample.completion_percent >= 100 ? "sample-complete-row" : isPastDueDate(sample.due_date) ? "sample-overdue-row" : undefined}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{sample.analysis_label}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
     </section>}
     {view === "reports" && <section className="table-card report-directory">
       <div className="table-toolbar report-toolbar"><div><h2>Informes emitidos</h2><p>{visibleReports.length} de {issuedReports.length} informes mostrados</p></div><div className="report-filters"><select value={reportYear} onChange={(event) => setReportYear(event.target.value)} aria-label="Filtrar informes por año"><option value="all">Todos los años</option>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select><input type="search" value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar informe o cliente" aria-label="Buscar informe o cliente" /></div></div>
@@ -820,5 +895,5 @@ export default function Home() {
         })}</tbody>
       </table></div>
     </section>}
-  </section>{selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button><p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div>{selected.analysisOrderCreatedAt && userRole !== "analista" && <button className="button primary oa-export-button" disabled={worksheetLocked || exportingReport} onClick={requestReportExport}>{worksheetLocked ? "Exportada a informe" : "Exportar a Informe"}</button>}<label><span>Fecha de muestreo</span><input type="date" value={sampledInput} disabled={worksheetLocked || !laboratorySampled} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}>{uncertaintyIsNotApplicable(row.label) ? <input value="No aplica" disabled aria-label={`Incertidumbre no aplicable para ${row.label}`} /> : <input type="number" min="0" step="0.00001" value={row.uncertainty || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/>}<div><strong>{row.label}</strong></div><input value={row.result_value || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/><select value={row.analyst_name || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value })}><option value="">Seleccionar…</option>{[...new Set([...analystInitials, row.analyst_name || "", row.released_by || ""].filter(Boolean))].sort().map((initials) => <option key={initials} value={initials}>{initials}</option>)}</select><select value={row.released_by || ""} disabled={worksheetLocked} onChange={(event) => updateRow(row.id, { released_by: event.target.value })}><option value="">Seleccionar…</option>{[...new Set([...analystInitials, row.analyst_name || "", row.released_by || ""].filter(Boolean))].sort().map((initials) => <option key={initials} value={initials}>{initials}</option>)}</select></div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">Esta orden no tiene aún una plantilla de parámetros.</p>}<button className="button primary full" disabled={savingOrder || worksheetLocked} onClick={() => void saveAnalysisOrder()}>{worksheetLocked ? "Orden exportada a informe" : savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{selected && reportPreviewOpen && <ReportPreview entry={selected} rows={orderRows} sampledAt={sampledInput} onSampledAtChange={setSampledInput} onClose={() => { setReportPreviewOpen(false); if (reportListPreview) setSelected(null); setReportListPreview(false); }} onContinue={() => setExportConfirmOpen(true)} userId={session.user.id} readOnly={selected.status === "informe_emitido"}/>} {exportConfirmOpen && <div className="modal-backdrop export-confirm-backdrop" onClick={() => !exportingReport && setExportConfirmOpen(false)}><section className="modal export-confirm-modal" onClick={(event) => event.stopPropagation()}><p className="eyebrow">EXPORTAR A INFORME</p><h2>Confirmar exportación</h2><p className="export-warning">La orden de análisis se exportará a un formato de informe. Ya no podrán modificarse los valores a menos que se comience un proceso de corrección de informe.</p><p className="export-question">¿Está seguro de que quiere exportar a informe?</p><div className="export-confirm-actions"><button className="button secondary" disabled={exportingReport} onClick={() => setExportConfirmOpen(false)}>Cancelar</button><button className="button primary" disabled={exportingReport} onClick={() => void issueReportFromWorksheet()}>{exportingReport ? "Exportando…" : "Sí, exportar a informe"}</button></div></section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 0001" maxLength={4}/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
+  </section>{selected && <div className="modal-backdrop" onClick={() => { if (!savingOrder && !exportingReport) { sampleLoadId.current += 1; setSelected(null); } }}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => { if (!savingOrder && !exportingReport) { sampleLoadId.current += 1; setSelected(null); } }}>×</button><p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div>{selected.analysisOrderCreatedAt && userRole !== "analista" && <button className="button primary oa-export-button" disabled={worksheetLocked || savingOrder || exportingReport || worksheetLoading} onClick={requestReportExport}>{worksheetLocked ? "Exportada a informe" : "Exportar a Informe"}</button>}<label><span>Fecha de muestreo</span><input type="date" value={sampledInput} disabled={worksheetLocked || worksheetLoading || savingOrder || exportingReport || !laboratorySampled} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}>{uncertaintyIsNotApplicable(row.label) ? <input value="No aplica" disabled aria-label={`Incertidumbre no aplicable para ${row.label}`} /> : <input type="number" min="0" step="0.00001" value={row.uncertainty || ""} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/>}<div><strong>{row.label}</strong></div><ResultValueEditor result={row} label={row.label} structured={structuredResults} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(patch) => updateRow(row.id, patch)}/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/>{legacyWorksheet ? <><input maxLength={3} value={row.analyst_name || ""} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></> : <><StaffAssignment staff={laboratoryStaff} assignment="analista" staffId={row.analyst_staff_id} legacy={row.analyst_name} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(id, initials) => updateRow(row.id, { analyst_staff_id: id, analyst_name: initials })}/><StaffAssignment staff={laboratoryStaff} assignment="revisor" staffId={row.released_by_staff_id} legacy={row.released_by} disabled={worksheetLocked || savingOrder || exportingReport} onChange={(id, initials) => updateRow(row.id, { released_by_staff_id: id, released_by: initials })}/></>}</div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">{worksheetLoading ? "Cargando orden de análisis…" : "Esta orden no tiene aún una plantilla de parámetros."}</p>}<button className="button primary full" disabled={savingOrder || exportingReport || worksheetLoading || !orderRows.length || worksheetLocked} onClick={() => void saveAnalysisOrder()}>{worksheetLocked ? "Orden exportada a informe" : savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{selected && reportPreviewOpen && <ReportPreview entry={{ ...selected, sampler: staffDisplayName(laboratoryStaff, selected.samplerStaffId, selected.sampler) }} rows={orderRows} sampledAt={sampledInput} onSampledAtChange={setSampledInput} onClose={() => { setReportPreviewOpen(false); if (reportListPreview) setSelected(null); setReportListPreview(false); }} onContinue={() => setExportConfirmOpen(true)} userId={session.user.id} readOnly={selected.status === "informe_emitido"}/>} {exportConfirmOpen && <div className="modal-backdrop export-confirm-backdrop" onClick={() => !exportingReport && setExportConfirmOpen(false)}><section className="modal export-confirm-modal" onClick={(event) => event.stopPropagation()}><p className="eyebrow">EXPORTAR A INFORME</p><h2>Confirmar exportación</h2><p className="export-warning">La orden de análisis se exportará a un formato de informe. Ya no podrán modificarse los valores a menos que se comience un proceso de corrección de informe.</p><p className="export-question">¿Está seguro de que quiere exportar a informe?</p><div className="export-confirm-actions"><button className="button secondary" disabled={exportingReport} onClick={() => setExportConfirmOpen(false)}>Cancelar</button><button className="button primary" disabled={exportingReport} onClick={() => void issueReportFromWorksheet()}>{exportingReport ? "Exportando…" : "Sí, exportar a informe"}</button></div></section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 0001" maxLength={4}/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
 }
