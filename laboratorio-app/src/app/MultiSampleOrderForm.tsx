@@ -63,8 +63,12 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   const [multiPackages, setMultiPackages] = useState<MultiPackage[]>([]);
   const [multiItems, setMultiItems] = useState<MultiItem[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
-  const [client, setClient] = useState("");
   const [selectedClientNumber, setSelectedClientNumber] = useState<number | null>(null);
+  const [clientModal, setClientModal] = useState<"select" | "create" | null>(null);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientCreateMessage, setClientCreateMessage] = useState("");
+  const [clientCreateSaving, setClientCreateSaving] = useState(false);
+  const [newClient, setNewClient] = useState({ name: "", branch: "", address: "", contact: "", phone: "", email: "", rfc: "" });
   const [multiple, setMultiple] = useState(false);
   const [sampleCount, setSampleCount] = useState(1);
   const [samples, setSamples] = useState<SampleDraft[]>([blankSample()]);
@@ -97,7 +101,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       supabase.from("multi_packages").select("id, name, sample_count").eq("active", true).order("name"),
       supabase.from("multi_package_items").select("multi_package_id, sample_position, parameter_id, display_order").order("display_order"),
       supabase.from("clients").select("id, client_number, name, branch, contact_name, address, rfc").eq("active", true).order("name"),
-      supabase.from("laboratory_staff").select("id, full_name, initials, active, functions").order("full_name"),
+      supabase.rpc("list_assignable_staff", { p_functions: ["muestreador"] }),
     ]);
     const packageData = (packageResult.data || []) as AnalysisPackage[];
     setPackages(packageData);
@@ -205,6 +209,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
+    if (!selectedClientNumber) { setMessage("Selecciona o da de alta un cliente para continuar."); return; }
     if (labSampling === "") { setMessage("Indica si el muestreo fue realizado por el laboratorio."); return; }
     if (labSampling === "yes" && !samplingNumber.trim()) { setMessage("Captura el número de muestreo."); return; }
     if (multiple && analysisStrategy === "") { setMessage("Selecciona cómo se asignarán los análisis de las muestras."); return; }
@@ -217,8 +222,7 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       setMessage("Asigna un paquete o parámetros a cada muestra."); return;
     }
 
-    const clientForOrder = clients.find((item) => item.client_number === selectedClientNumber)
-      || clients.find((item) => item.client_number.toString() === client.trim() || clientDisplayName(item) === client.trim());
+    const clientForOrder = clients.find((item) => item.client_number === selectedClientNumber);
     if (!clientForOrder) { setMessage("Selecciona un cliente y sucursal de la lista."); return; }
     if (!multiple && samples[0].mode === "custom" && saveCustomPackage && !customPackageName.trim()) {
       setMessage("Captura un nombre para guardar la configuración como paquete reutilizable.");
@@ -289,10 +293,59 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
 
   const selectedMultiName = useMemo(() => multiPackages.find((item) => item.id === selectedMultiPackage)?.name, [multiPackages, selectedMultiPackage]);
   const selectedClient = useMemo(() => clients.find((item) => item.client_number === selectedClientNumber), [clients, selectedClientNumber]);
-  function selectClientFromValue(value: string, normalizeDisplay = false) {
-    const match = clients.find((item) => clientDisplayName(item) === value.trim() || item.client_number.toString() === value.trim());
-    setSelectedClientNumber(match?.client_number || null);
-    setClient(match && normalizeDisplay ? clientDisplayName(match) : value);
+  const filteredClients = useMemo(() => {
+    const normalizedSearch = clientSearch.trim().toLocaleLowerCase("es-MX");
+    if (!normalizedSearch) return clients;
+    return clients.filter((item) => `cliente ${item.client_number} ${clientDisplayName(item)} ${item.contact_name || ""}`.toLocaleLowerCase("es-MX").includes(normalizedSearch));
+  }, [clients, clientSearch]);
+  async function createClientAndSelect(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setClientCreateMessage("");
+    setClientCreateSaving(true);
+    const { data, error } = await supabase.rpc("create_client", {
+      p_name: newClient.name.trim(),
+      p_contact_name: newClient.contact.trim() || null,
+      p_email: newClient.email.trim() || null,
+      p_phone: newClient.phone.trim() || null,
+      p_address: newClient.address.trim() || null,
+      p_rfc: newClient.rfc.trim() || null,
+      p_attention_to: null,
+      p_branch: newClient.branch.trim() || null,
+    });
+    if (error || !data) {
+      setClientCreateSaving(false);
+      setClientCreateMessage(`No se pudo guardar el cliente: ${error?.message || "No se recibió el registro creado."}`);
+      return;
+    }
+    const createdClient = data as ClientOption;
+    const { data: refreshedClients, error: refreshError } = await supabase.from("clients")
+      .select("id, client_number, name, branch, contact_name, address, rfc")
+      .eq("active", true)
+      .order("name");
+    setClientCreateSaving(false);
+    if (refreshError || !refreshedClients) {
+      setClientCreateMessage(`El cliente se guardó, pero no se pudo cargar para seleccionarlo: ${refreshError?.message || "Error al actualizar la lista."}`);
+      return;
+    }
+    const refreshed = refreshedClients as ClientOption[];
+    setClients(refreshed);
+    const savedClient = refreshed.find((item) => item.id === createdClient.id)
+      || refreshed.find((item) => item.client_number === createdClient.client_number);
+    if (!savedClient) {
+      setClientCreateMessage("El cliente se guardó, pero no apareció en la lista activa. Revisa que esté activo e intenta seleccionarlo.");
+      return;
+    }
+    setSelectedClientNumber(savedClient.client_number);
+    setNewClient({ name: "", branch: "", address: "", contact: "", phone: "", email: "", rfc: "" });
+    setClientModal(null);
+  }
+  function openClientPicker() {
+    setClientSearch("");
+    setClientModal("select");
+  }
+  function openClientCreator() {
+    setClientCreateMessage("");
+    setClientModal("create");
   }
 
   if (building) return <form className="order-form multi-order-form" onSubmit={(event) => { event.preventDefault(); void saveMultiPackage(); }}>
@@ -301,12 +354,13 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
     {message && <p className="auth-message">{message}</p>}<div className="form-actions"><button type="button" className="button secondary" onClick={() => { setBuilding(false); setAnalysisStrategy(""); }}>Volver</button><button className="button primary" disabled={builderSaving}>{builderSaving ? "Guardando…" : "Guardar multipaquete"}</button></div>
   </form>;
 
-  return <form className={multiple ? "order-form multi-order-form" : "order-form"} onSubmit={submit}>
+  return <>
+  <form className={multiple ? "order-form multi-order-form" : "order-form"} onSubmit={submit}>
     <section className="form-card">
       <h2>Datos de recepción</h2>
       <p>La OP se genera automáticamente al guardar. La fecha compromiso se calcula a ocho días hábiles desde la recepción.</p>
       <div className="form-grid">
-        <label>Cliente y sucursal<input required list="existing-clients" value={client} onChange={(event) => selectClientFromValue(event.target.value)} onBlur={(event) => selectClientFromValue(event.target.value, true)} placeholder="Buscar por cliente o número" /><datalist id="existing-clients">{clients.map((item) => <option key={item.client_number} value={clientDisplayName(item)} label={`Cliente ${item.client_number}`} />)}</datalist></label>
+        <div className="client-choice-field"><span>Cliente y sucursal</span><div className="client-choice-actions"><button type="button" className="button secondary" onClick={openClientCreator}>Dar de alta cliente nuevo</button><button type="button" className="button secondary" onClick={openClientPicker}>Seleccionar cliente existente</button></div>{selectedClient && <div className="selected-client"><strong>Cliente {selectedClient.client_number}: {selectedClient.name}</strong><span>{[selectedClient.branch ? `Sucursal: ${selectedClient.branch}` : null, selectedClient.contact_name, selectedClient.rfc, selectedClient.address].filter(Boolean).join(" · ") || "Cliente seleccionado"}</span></div>}</div>
         <label>¿El laboratorio realizó el muestreo?<select required value={labSampling} onChange={(event) => { const value = event.target.value as "" | "yes" | "no"; setLabSampling(value); if (value === "no") { setSamplingNumber(""); setSampler("El cliente"); setSamplerStaffId(""); } else if (value === "yes" && sampler === "El cliente") { setSampler(""); } }}><option value="">Seleccionar…</option><option value="yes">Sí</option><option value="no">No</option></select></label>
         {labSampling === "yes" && <label>Número de muestreo<input required value={samplingNumber} onChange={(event) => setSamplingNumber(event.target.value)} /></label>}
         {labSampling === "yes" && <label>Muestreador<select value={samplerStaffId} onChange={(event) => { setSamplerStaffId(event.target.value); setSampler(laboratoryStaff.find((person) => person.id === event.target.value)?.full_name || ""); }}><option value="">Sin asignar</option>{laboratoryStaff.filter((person) => eligibleStaff(person, "muestreador")).map((person) => <option key={person.id} value={person.id}>{person.full_name} ({person.initials})</option>)}</select></label>}
@@ -321,7 +375,6 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
           else updateSample(0, { mode: "package", packageId: event.target.value, parameterIds: [] });
         }}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="custom">Personalizar parámetros</option></select></label>}
       </div>
-      {selectedClient && <div className="selected-client"><strong>Cliente {selectedClient.client_number}: {selectedClient.name}</strong><span>{[selectedClient.branch ? `Sucursal: ${selectedClient.branch}` : null, selectedClient.contact_name, selectedClient.rfc, selectedClient.address].filter(Boolean).join(" · ") || "Cliente existente seleccionado"}</span></div>}
       {!multiple && samples[0].mode === "custom" && <div className="strategy-detail"><p className="selection-note">Selecciona los parámetros que integrarán esta OA personalizada.</p><ParameterPicker parameters={parameters} selectedIds={samples[0].parameterIds} onToggle={(parameterId) => toggleParameter(0, parameterId)} /><label className="check-label"><input type="checkbox" checked={saveCustomPackage} onChange={(event) => setSaveCustomPackage(event.target.checked)} />Guardar esta configuración para futuras OPs</label>{saveCustomPackage && <label className="standalone-field">Nombre del paquete reutilizable<input required value={customPackageName} onChange={(event) => setCustomPackageName(event.target.value)} placeholder="Ej. Análisis especial de descarga" /></label>}</div>}
     </section>
     <section className="form-card">
@@ -344,5 +397,8 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
       {analysisStrategy === "multi-existing" && selectedMultiName && <section className="form-card sample-config-card"><p className="selection-note">El multipaquete <strong>{selectedMultiName}</strong> definirá los parámetros de sus {sampleCount} muestras.</p></section>}
     </>}
     {message && <p className="auth-message">{message}</p>}<div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancelar</button><button className="button primary" disabled={saving}>{saving ? "Guardando…" : multiple ? "Registrar OP" : "Registrar entrada"}</button></div>
-  </form>;
+  </form>
+  {clientModal === "select" && <div className="modal-backdrop client-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setClientModal(null); }}><section className="modal client-picker-modal" role="dialog" aria-modal="true" aria-labelledby="client-picker-title"><button type="button" className="close" aria-label="Cerrar" onClick={() => setClientModal(null)}>×</button><h2 id="client-picker-title">Seleccionar cliente</h2><p className="client-name">Busca por número, razón social, sucursal o contacto.</p><input className="client-picker-search" type="search" autoFocus value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Buscar cliente…" aria-label="Buscar cliente"/><div className="client-picker-list">{filteredClients.length === 0 ? <p className="client-picker-empty">{clients.length === 0 ? "No hay clientes activos registrados." : "No se encontraron clientes con esa búsqueda."}</p> : filteredClients.map((item) => <button type="button" className="client-picker-option" key={item.id} onClick={() => { setSelectedClientNumber(item.client_number); setClientModal(null); }}><span className="client-picker-number">{item.client_number}</span><span className="client-picker-details"><strong>{item.name}</strong><small>{[item.branch ? `Sucursal: ${item.branch}` : null, item.contact_name].filter(Boolean).join(" · ") || "Sin sucursal o contacto especificado"}</small></span></button>)}</div></section></div>}
+  {clientModal === "create" && <div className="modal-backdrop client-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !clientCreateSaving) setClientModal(null); }}><form className="modal client-create-modal" role="dialog" aria-modal="true" aria-labelledby="client-create-title" onSubmit={createClientAndSelect}><button type="button" className="close" aria-label="Cerrar" disabled={clientCreateSaving} onClick={() => setClientModal(null)}>×</button><h2 id="client-create-title">Alta de cliente</h2><p className="client-name">Al guardarlo quedará seleccionado automáticamente en esta OP.</p><div className="client-create-grid"><label>Nombre o razón social<input required autoFocus value={newClient.name} onChange={(event) => setNewClient((current) => ({ ...current, name: event.target.value }))}/></label><label>Sucursal<input value={newClient.branch} onChange={(event) => setNewClient((current) => ({ ...current, branch: event.target.value }))} placeholder="Ej. Planta norte"/></label><label>Dirección<input value={newClient.address} onChange={(event) => setNewClient((current) => ({ ...current, address: event.target.value }))}/></label><label>RFC<input value={newClient.rfc} onChange={(event) => setNewClient((current) => ({ ...current, rfc: event.target.value }))}/></label><label>Contacto<input value={newClient.contact} onChange={(event) => setNewClient((current) => ({ ...current, contact: event.target.value }))}/></label><label>Teléfono<input value={newClient.phone} onChange={(event) => setNewClient((current) => ({ ...current, phone: event.target.value }))}/></label><label>Correo electrónico<input type="email" value={newClient.email} onChange={(event) => setNewClient((current) => ({ ...current, email: event.target.value }))}/></label></div>{clientCreateMessage && <p className="auth-message" role="alert">{clientCreateMessage}</p>}<div className="form-actions"><button type="button" className="button secondary" disabled={clientCreateSaving} onClick={() => setClientModal(null)}>Cancelar</button><button className="button primary" disabled={clientCreateSaving}>{clientCreateSaving ? "Guardando…" : "Guardar y seleccionar"}</button></div></form></div>}
+  </>;
 }

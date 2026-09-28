@@ -9,6 +9,22 @@ before enabling production migration runs.
 
 ## Getting Started
 
+Create `laboratorio-app/.env.local` with the public Supabase values and a server-only
+secret key. Never prefix the secret with `NEXT_PUBLIC_`:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+SUPABASE_SECRET_KEY=sb_secret_...
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+```
+
+`SUPABASE_SECRET_KEY` is used only by the protected administrator endpoint that
+invites users and changes roles. Add the production site URL and `/invite` to the
+allowed redirect URLs in Supabase Auth. For an invitation-only system, disable
+public user signups in the Supabase Auth settings; administrator invitations still
+use the server-side Admin API.
+
 First, run the development server:
 
 ```bash

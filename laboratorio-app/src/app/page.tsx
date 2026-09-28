@@ -8,6 +8,7 @@ import { PersonnelDirectory } from "./PersonnelDirectory";
 import { ReportPreview } from "./ReportPreview";
 import { StaffAssignment } from "./StaffAssignment";
 import { ResultValueEditor } from "./ResultValueEditor";
+import { UserManagement } from "./UserManagement";
 import { resultValidationError, resultWriteFields, type ResultInputKind } from "@/lib/result-values";
 import { loadWorksheetColumns, missingStaffColumns, staffDisplayName, type LaboratoryStaff } from "@/lib/staff-attribution";
 type Entry = {
@@ -70,7 +71,7 @@ type ClientRecord = {
     rfc: string | null;
     phone: string | null;
 };
-type AppRole = "administrador" | "recepcion" | "analista" | "revisor";
+type AppRole = "administrador" | "recepcion" | "analista";
 type StaffSample = {
     order_id: string;
     sample_id: string;
@@ -112,13 +113,11 @@ function isPastDueDate(value: string | null) {
 export default function Home() {
     const [session, setSession] = useState<Session | null>(null);
     const [authReady, setAuthReady] = useState(false);
-    const [authMode, setAuthMode] = useState<"login" | "signup">("login");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [fullName, setFullName] = useState("");
     const [authMessage, setAuthMessage] = useState("");
     const [authLoading, setAuthLoading] = useState(false);
-    const [view, setView] = useState<"entries" | "new" | "clients" | "samples" | "parameters" | "personnel" | "reports">("entries");
+    const [view, setView] = useState<"entries" | "new" | "clients" | "samples" | "parameters" | "personnel" | "users" | "reports">("entries");
     const [userRole, setUserRole] = useState<AppRole | null>(null);
     const [entries, setEntries] = useState<Entry[]>([]);
     const [query, setQuery] = useState("");
@@ -177,6 +176,7 @@ export default function Home() {
     const [parameterDirectoryMode, setParameterDirectoryMode] = useState<"list" | "create">("list");
     const [personnelSubnavVisible] = useState(false);
     const [personnelDirectoryMode, setPersonnelDirectoryMode] = useState<"list" | "create">("list");
+    const [userManagementMode, setUserManagementMode] = useState<"list" | "create">("list");
     const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
     const [sampleQuery, setSampleQuery] = useState("");
     const [reportQuery, setReportQuery] = useState("");
@@ -232,7 +232,7 @@ export default function Home() {
     }
     async function loadUserRole(activeSession: Session) {
         const { data } = await supabase.from("profiles").select("role").eq("id", activeSession.user.id).maybeSingle();
-        const role = data?.role as AppRole | undefined;
+        const role = (data?.role === "revisor" ? "recepcion" : data?.role) as AppRole | undefined;
         setUserRole(role || null);
         if (role === "analista") setView("samples");
     }
@@ -463,24 +463,27 @@ export default function Home() {
                 setView("parameters"); setParameterDirectoryMode("list"); setShowCancelled(false);
             }));
         }
-        items.push(makeButton("♙   Personal", view === "personnel" ? "nav-item active" : "nav-item", () => {
+        if (userRole === "administrador") items.push(makeButton("♙   Personal", view === "personnel" ? "nav-item active" : "nav-item", () => {
             setView("personnel"); setPersonnelDirectoryMode("list"); setShowCancelled(false);
+        }));
+        if (userRole === "administrador") items.push(makeButton("⚙   Usuarios y permisos", view === "users" ? "nav-item active" : "nav-item", () => {
+            setView("users"); setUserManagementMode("list"); setShowCancelled(false);
         }));
         if (userRole !== "analista") items.push(makeButton("◫   Informes", view === "reports" ? "nav-item active" : "nav-item", () => {
             setView("reports"); setShowCancelled(false);
         }));
-        items.push(makeButton("▥   Reportes", "nav-item muted"));
+        if (userRole === "administrador") items.push(makeButton("▥   Reportes", "nav-item muted"));
         menu.append(...items);
         nav.append(menu);
         return () => {
             menu.remove();
             originalItems.forEach((item) => { item.style.display = ""; });
         };
-    }, [session, userRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode]);
+    }, [session, userRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode, userManagementMode]);
     useEffect(() => {
-        if (view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "reports") return;
+        if (view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports") return;
         const title = document.querySelector(".topbar h1");
-        if (title) title.textContent = view === "samples" ? "Muestras" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : "Informes";
+        if (title) title.textContent = view === "samples" ? "Muestras" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "users" ? "Usuarios y permisos" : "Informes";
     }, [view]);
     const visibleOrderGroups = useMemo(() => {
         const groups = new Map<string, Entry[]>();
@@ -534,17 +537,19 @@ export default function Home() {
         return issuedReports.filter((report) => (reportYear === "all" || report.issuedAt.startsWith(reportYear)) && (!normalizedQuery || `${report.reportNumber} ${report.client} ${report.clientBranch || ""} ${report.analysis}`.toLocaleLowerCase("es-MX").includes(normalizedQuery)));
     }, [issuedReports, reportQuery, reportYear]);
     const worksheetLocked = selected?.status === "informe_emitido" || Boolean(selected?.reportNumber || selected?.issuedAt);
-    async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = authMode === "login" ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } }); setAuthMessage(result.error ? result.error.message : authMode === "login" ? "Acceso correcto." : "Cuenta creada. Revisa tu correo para confirmarla."); setAuthLoading(false); }
+    async function authenticate(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); const result = await supabase.auth.signInWithPassword({ email, password }); setAuthMessage(result.error ? result.error.message : "Acceso correcto."); setAuthLoading(false); }
     async function openSample(entry: Entry) {
         const loadId = ++sampleLoadId.current;
         setSelected(entry); setExportConfirmOpen(false); setReportPreviewOpen(false); setReportListPreview(false);
         setSampledInput(entry.sampledAt || ""); setOrderRows([]); setWorksheetRevision(null); setLegacyWorksheet(false); setStructuredResults(false); setWorksheetLoading(true);
         const columns = "id, label, unit, row_type, uncertainty, result_value, analyst_reference, analyzed_at, analyst_name, released_by, display_order, par_form, method_reference";
         const [worksheet, staffResult] = await Promise.all([
-            loadWorksheetColumns(({ staff, structured }) => supabase.from("worksheet_results")
-                .select(`${columns}${staff ? ", analyst_staff_id, released_by_staff_id, worksheet_revision, worksheet_sampled_at" : ""}${structured ? ", result_input_kind, result_type, result_numeric, result_qualifier, result_text" : ""}`)
-                .eq("sample_id", entry.sampleId).order("display_order")),
-            supabase.from("laboratory_staff").select("id, full_name, initials, functions, active").order("full_name"),
+            userRole === "analista"
+                ? supabase.rpc("load_staff_sample_worksheet", { p_sample_id: entry.sampleId }).then((result) => ({ result, legacyWorksheet: false, structuredResults: true }))
+                : loadWorksheetColumns(({ staff, structured }) => supabase.from("worksheet_results")
+                    .select(`${columns}${staff ? ", analyst_staff_id, released_by_staff_id, worksheet_revision, worksheet_sampled_at" : ""}${structured ? ", result_input_kind, result_type, result_numeric, result_qualifier, result_text" : ""}`)
+                    .eq("sample_id", entry.sampleId).order("display_order")),
+            supabase.rpc("list_assignable_staff", { p_functions: userRole === "analista" ? ["analista", "revisor", "responsable_autorizacion"] : ["analista", "revisor", "responsable_autorizacion", "muestreador"] }),
         ]);
         const { result, legacyWorksheet: legacy } = worksheet;
         if (loadId !== sampleLoadId.current) return false;
@@ -749,6 +754,8 @@ export default function Home() {
             "Sí, exportar a informe": "Confirma la exportación de la orden al informe.",
             "Registrar OP": "Registra la OP y todas sus muestras configuradas.",
             "Registrar entrada": "Registra la OP y su muestra de entrada.",
+            "Dar de alta cliente nuevo": "Abre el formulario para registrar un cliente y seleccionarlo en esta OP.",
+            "Seleccionar cliente existente": "Abre la lista de clientes activos para elegir uno para esta OP.",
             "Guardar multipaquete": "Guarda esta plantilla reutilizable de muestras y parámetros.",
             "Volver": "Regresa a la configuración de la OP sin guardar este multipaquete.",
             "Modificar": "Abre la edición de la información seleccionada.",
@@ -763,6 +770,7 @@ export default function Home() {
             "¿Ya tienes cuenta? Iniciar sesión": "Cambia al formulario para iniciar sesión.",
         };
         const setTooltip = (button: HTMLButtonElement) => {
+            button.removeAttribute("title");
             if (button.dataset.tooltip && button.dataset.tooltipAuto !== "true") return;
             const visibleText = (button.textContent || "").replace(/[▦▤▣◫▥↳＋⋮▼▲×…]/g, "").replace(/\s+/g, " ").trim();
             const ariaLabel = button.getAttribute("aria-label") || "";
@@ -778,7 +786,6 @@ export default function Home() {
             const shortTooltip = tooltip.split(/\s+/).slice(0, 25).join(" ");
             button.dataset.tooltip = shortTooltip;
             button.dataset.tooltipAuto = "true";
-            button.title = shortTooltip;
         };
         const applyTooltips = (root: ParentNode = document) => root.querySelectorAll<HTMLButtonElement>("button").forEach(setTooltip);
         applyTooltips();
@@ -798,7 +805,7 @@ export default function Home() {
                 }
             });
         });
-        observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["aria-label"] });
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["aria-label", "title"] });
         return () => observer.disconnect();
     }, []);
     if (!authReady)
@@ -847,8 +854,10 @@ export default function Home() {
         </div>}
     </main>;
     if (!session)
-        return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>{authMode === "login" ? "Bienvenido de nuevo" : "Crear cuenta de laboratorio"}</h1><p className="auth-description">{authMode === "login" ? "Ingresa con tu cuenta autorizada." : "Crea la primera cuenta para probar el sistema."}</p><form onSubmit={authenticate} className="auth-form">{authMode === "signup" && <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)}/></label>}<label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Ingresar" : "Crear cuenta"}</button></form><button className="auth-switch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "¿No tienes cuenta? Crear cuenta" : "¿Ya tienes cuenta? Iniciar sesión"}</button></section></main>;
-    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{view === "personnel" && personnelDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}</header>
+        return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>Bienvenido de nuevo</h1><p className="auth-description">Ingresa con una cuenta autorizada por el administrador.</p><form onSubmit={authenticate} className="auth-form"><label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : "Ingresar"}</button></form></section></main>;
+    if (!userRole || (userRole === "analista" && view !== "samples") || (userRole === "recepcion" && (view === "personnel" || view === "users")))
+        return <main className="auth-page"><section className="auth-card"><p className="auth-description">Cargando tu panel autorizado…</p></section></main>;
+    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "users" ? "Usuarios y permisos" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{view === "personnel" && personnelDirectoryMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}{view === "users" && userManagementMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setUserManagementMode("create")}>Invitar usuario</button>}</header>
     {view === "samples" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Muestras</h2><p>{visibleStaffSamples.length} muestras encontradas</p></div><input type="search" value={sampleQuery} onChange={(event) => setSampleQuery(event.target.value)} placeholder="Buscar número de muestra" aria-label="Buscar por número de muestra" /></div>
       <div className="table-wrap"><table className="intake-table" style={{ width: "980px", minWidth: "980px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Análisis</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={5}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras disponibles."}</td></tr> : visibleStaffSamples.map((sample) => <tr key={sample.sample_id} className={sample.completion_percent >= 100 ? "sample-complete-row" : isPastDueDate(sample.due_date) ? "sample-overdue-row" : undefined}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{sample.analysis_label}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
@@ -858,8 +867,9 @@ export default function Home() {
       <div className="table-wrap"><table className="report-directory-table"><thead><tr><th>Número de informe</th><th>Cliente</th><th>Tipo de análisis</th><th>Fecha de emisión</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleReports.length === 0 ? <tr><td colSpan={6}>{reportQuery.trim() || reportYear !== "all" ? "No se encontraron informes con esos filtros." : "Aún no hay informes emitidos."}</td></tr> : visibleReports.map((report) => <tr key={report.orderId}><td><strong>{report.reportNumber}</strong></td><td><strong>{report.client}</strong>{report.clientBranch && <span>{report.clientBranch}</span>}</td><td>{report.analysis}</td><td>{formatDate(report.issuedAt)}</td><td><span className="status status-green">Emitido</span></td><td><button type="button" className="button secondary report-view-button" onClick={() => void openIssuedReport(report)}>Ver informe</button></td></tr>)}</tbody></table></div>
     </section>}
     {view === "parameters" && <ParameterDirectory canCreate={userRole === "administrador" || userRole === "recepcion"} mode={parameterDirectoryMode} onCancel={() => setParameterDirectoryMode("list")} />}
-    {view === "personnel" && <PersonnelDirectory canManage={userRole === "administrador" || userRole === "recepcion"} mode={personnelDirectoryMode} userId={session.user.id} onCancel={() => setPersonnelDirectoryMode("list")} />}
-    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "reports" && <section className="table-card">
+    {view === "personnel" && userRole === "administrador" && <PersonnelDirectory canManage mode={personnelDirectoryMode} userId={session.user.id} onCancel={() => setPersonnelDirectoryMode("list")} />}
+    {view === "users" && userRole === "administrador" && <UserManagement mode={userManagementMode} currentUserId={session.user.id} onCancel={() => setUserManagementMode("list")} />}
+    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports" && <section className="table-card">
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
         <input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/>

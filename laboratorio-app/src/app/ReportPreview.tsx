@@ -128,17 +128,14 @@ export function ReportPreview({ entry, rows, sampledAt, onSampledAtChange, onClo
   useEffect(() => {
     let active = true;
     async function loadLaboratoryStaff() {
-      const { data } = await supabase
-        .from("laboratory_staff")
-        .select("id, full_name, initials, position_title, active")
-        .order("full_name");
+      const { data } = await supabase.rpc("list_sample_report_staff", { p_sample_id: entry.sampleId });
       if (!active) return;
       setLaboratoryStaff((data || []) as LaboratoryStaff[]);
       setStaffLoading(false);
     }
     void loadLaboratoryStaff();
     return () => { active = false; };
-  }, []);
+  }, [entry.sampleId]);
 
   const samplerFullName = useMemo(() =>
     laboratoryStaff.find((person) => person.id === entry.samplerStaffId)?.full_name || entry.sampler,
