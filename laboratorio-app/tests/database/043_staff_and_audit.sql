@@ -1,7 +1,7 @@
 begin;
 insert into auth.users(id) values
  ('43000000-0000-0000-0000-000000000001'),('43000000-0000-0000-0000-000000000002'),('43000000-0000-0000-0000-000000000003');
-update public.profiles set role=case right(id::text,1) when '2' then 'analista'::public.app_role else 'recepcion'::public.app_role end where id::text like '43000000%';
+update public.profiles set role=case right(id::text,1) when '2' then 'analista'::public.app_role when '3' then 'administrador'::public.app_role else 'recepcion'::public.app_role end where id::text like '43000000%';
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
 insert into public.laboratory_staff(id,full_name,initials,position_title,functions) values
  ('43000000-0000-0000-0000-000000000010','Analyst One','AO','Analyst',array['analista']),
@@ -54,8 +54,8 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000002',true);
 -- Unchanged inactive credited identity stays valid and retains historical spelling.
 select public.save_analysis_worksheet((select sample_id from state),(select original_revision from state),(select jsonb_set(rows,'{0,result_value}','"2.25"') from payload));
-select pg_temp.assert((select bool_and(analyst_name='AO') from public.analysis_results where worksheet_id=(select worksheet_id from state)),'rename preserves credited text and ID');
-select pg_temp.assert((select bool_and(worksheet_sampled_at='2087-01-01') from public.worksheet_results where sample_id=(select sample_id from state)),'analyst omitted sampled date does not clear it');
+select pg_temp.assert((select bool_and(analyst_name='AO') from public.load_staff_sample_worksheet((select sample_id from state))),'rename preserves credited text and ID');
+select pg_temp.assert((select bool_and(worksheet_sampled_at='2087-01-01') from public.load_staff_sample_worksheet((select sample_id from state))),'analyst omitted sampled date does not clear it');
 select pg_temp.assert(not exists(select 1 from public.clients),'analyst cannot see client');
 select pg_temp.assert(not exists(select 1 from public.audit_events),'analyst cannot read client-bearing history');
 reset role;
@@ -64,6 +64,7 @@ reset role;
 update public.analysis_results set analyst_staff_id=null,analyst_name='Historic unknown' where worksheet_id=(select worksheet_id from state);
 update payload set rows=(select jsonb_agg(to_jsonb(r) order by r.parameter_id) from public.analysis_results r where worksheet_id=(select worksheet_id from state));
 update state set original_revision=(select revision from public.analysis_worksheets where id=state.worksheet_id);
+select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 select public.save_analysis_worksheet((select sample_id from state),(select original_revision from state),(select jsonb_set(rows,'{0,result_value}','"3.25"') from payload));
 select pg_temp.assert_raises($q$update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000010' where worksheet_id=(select worksheet_id from state)$q$,'analista activo');
