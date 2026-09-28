@@ -4,7 +4,7 @@ insert into auth.users(id) values
  ('41000000-0000-0000-0000-000000000002'),
  ('41000000-0000-0000-0000-000000000003'),
  ('41000000-0000-0000-0000-000000000004');
-update public.profiles set role = case right(id::text,1) when '1' then 'administrador'::public.app_role when '2' then 'recepcion'::public.app_role when '3' then 'analista'::public.app_role else 'revisor'::public.app_role end where id::text like '41000000%';
+update public.profiles set role = case right(id::text,1) when '1' then 'administrador'::public.app_role when '3' then 'analista'::public.app_role else 'recepcion'::public.app_role end where id::text like '41000000%';
 select set_config('request.jwt.claim.sub', '41000000-0000-0000-0000-000000000002', true);
 insert into public.clients(id,name) values ('41000000-0000-0000-0000-000000000010','Security fixture');
 insert into public.parameters(id,name) values ('41000000-0000-0000-0000-000000000011','Security fixture parameter');

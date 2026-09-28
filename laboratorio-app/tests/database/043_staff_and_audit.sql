@@ -1,7 +1,7 @@
 begin;
 insert into auth.users(id) values
  ('43000000-0000-0000-0000-000000000001'),('43000000-0000-0000-0000-000000000002'),('43000000-0000-0000-0000-000000000003');
-update public.profiles set role=case right(id::text,1) when '1' then 'recepcion'::public.app_role when '2' then 'analista'::public.app_role else 'revisor'::public.app_role end where id::text like '43000000%';
+update public.profiles set role=case right(id::text,1) when '2' then 'analista'::public.app_role else 'recepcion'::public.app_role end where id::text like '43000000%';
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
 insert into public.laboratory_staff(id,full_name,initials,position_title,functions) values
  ('43000000-0000-0000-0000-000000000010','Analyst One','AO','Analyst',array['analista']),
