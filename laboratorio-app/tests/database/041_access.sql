@@ -65,11 +65,22 @@ select public.issue_report('41000000-0000-0000-0000-000000000020','9999');
 do $$
 declare user_suffix text;
 begin
- foreach user_suffix in array array['1','2','3','4'] loop
+ foreach user_suffix in array array['1','2','4'] loop
   perform set_config('request.jwt.claim.sub','41000000-0000-0000-0000-00000000000'||user_suffix,true);
   perform pg_temp.assert_raises($q$update public.analysis_results set result_value='99' where worksheet_id in (select id from public.analysis_worksheets where sample_id='41000000-0000-0000-0000-000000000030')$q$, 'exportada');
   perform pg_temp.assert_raises($q$update public.analysis_results set worksheet_id=(select id from public.analysis_worksheets where sample_id='41000000-0000-0000-0000-000000000031') where worksheet_id in (select id from public.analysis_worksheets where sample_id='41000000-0000-0000-0000-000000000030')$q$, 'No se puede cambiar');
  end loop;
+end $$;
+select set_config('request.jwt.claim.sub','41000000-0000-0000-0000-000000000003',true);
+do $$
+declare affected integer;
+begin
+ update public.analysis_results set result_value='99';
+ get diagnostics affected = row_count;
+ perform pg_temp.assert(affected=0,'analyst direct result update blocked by RLS');
+ update public.analysis_results set worksheet_id='41000000-0000-0000-0000-000000000031';
+ get diagnostics affected = row_count;
+ perform pg_temp.assert(affected=0,'analyst direct worksheet reassignment blocked by RLS');
 end $$;
 select set_config('request.jwt.claim.sub','41000000-0000-0000-0000-000000000002',true);
 select pg_temp.assert_raises($q$select public.cancel_sample_entry('41000000-0000-0000-0000-000000000020')$q$, 'informe emitido');
