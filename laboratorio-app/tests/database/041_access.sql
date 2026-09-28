@@ -10,6 +10,9 @@ insert into public.clients(id,name) values ('41000000-0000-0000-0000-00000000001
 insert into public.parameters(id,name) values ('41000000-0000-0000-0000-000000000011','Security fixture parameter');
 insert into public.analysis_packages(id,code,name) values ('41000000-0000-0000-0000-000000000012','SECURITY-FIXTURE','Security fixture');
 insert into public.package_parameters(package_id,parameter_id) values ('41000000-0000-0000-0000-000000000012','41000000-0000-0000-0000-000000000011');
+insert into public.laboratory_staff(id,full_name,initials,position_title,functions) values
+ ('41000000-0000-0000-0000-000000000040','Security Analyst','SA','Analyst',array['analista']),
+ ('41000000-0000-0000-0000-000000000041','Security Reviewer','SR','Reviewer',array['revisor']);
 insert into public.analysis_orders(id,op_number,client_id,due_date) values
  ('41000000-0000-0000-0000-000000000020','SECURITY-1','41000000-0000-0000-0000-000000000010',current_date),
  ('41000000-0000-0000-0000-000000000021','SECURITY-2','41000000-0000-0000-0000-000000000010',current_date);
@@ -39,8 +42,21 @@ select set_config('request.jwt.claim.sub', '41000000-0000-0000-0000-000000000003
 select pg_temp.assert(not exists(select 1 from public.analysis_orders),'analyst cannot see order');
 select pg_temp.assert_raises($q$select public.get_client_by_number(1)$q$, 'No tienes permiso');
 select pg_temp.assert_raises($q$select public.create_worksheet_for_sample('41000000-0000-0000-0000-000000000030')$q$, 'No tienes permiso');
-update public.analysis_results set result_value='1.5',uncertainty=0.01,analyst_reference='12345',analyzed_at=current_date,analyst_name='AAA',released_by='BBB'
-where worksheet_id in (select id from public.analysis_worksheets where sample_id='41000000-0000-0000-0000-000000000030');
+select pg_temp.assert((select count(*)=1 from public.load_staff_sample_worksheet('41000000-0000-0000-0000-000000000030')),'analyst can load assigned worksheet data through RPC');
+with loaded as (
+ select * from public.load_staff_sample_worksheet('41000000-0000-0000-0000-000000000030')
+), payload as (
+ select max(worksheet_revision) revision,
+        jsonb_agg(to_jsonb(l) || jsonb_build_object(
+          'result_value','1.5','result_input_kind','number','uncertainty','0.01',
+          'analyst_reference','12345','analyzed_at',current_date,
+          'analyst_name','Security Analyst','released_by','Security Reviewer',
+          'analyst_staff_id','41000000-0000-0000-0000-000000000040',
+          'released_by_staff_id','41000000-0000-0000-0000-000000000041'
+        ) order by display_order) rows
+ from loaded l
+)
+select public.save_analysis_worksheet('41000000-0000-0000-0000-000000000030',revision,rows) from payload;
 select set_config('request.jwt.claim.sub', '41000000-0000-0000-0000-000000000004', true);
 select public.issue_report('41000000-0000-0000-0000-000000000020','9999');
 -- Current reissuance remains supported; this PR does not add report versioning.
