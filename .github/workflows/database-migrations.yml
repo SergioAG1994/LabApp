@@ -87,5 +87,5 @@ jobs:
             echo "::error::Complete the migration-history setup in supabase/README.md, then set SUPABASE_MIGRATIONS_READY=true."
             exit 1
           fi
-          supabase db push --linked --dry-run
-          supabase db push --linked --yes
+          supabase db push --linked --include-all --dry-run
+          supabase db push --linked --include-all --yes
