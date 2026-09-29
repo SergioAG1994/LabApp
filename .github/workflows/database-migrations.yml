@@ -80,10 +80,12 @@ jobs:
               exit 1
             fi
           done
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
           if [[ "$MIGRATIONS_READY" != "true" ]]; then
+            echo "Migration history preflight (read-only):"
+            supabase migration list --linked
             echo "::error::Complete the migration-history setup in supabase/README.md, then set SUPABASE_MIGRATIONS_READY=true."
             exit 1
           fi
-          supabase link --project-ref "$SUPABASE_PROJECT_ID"
           supabase db push --linked --dry-run
           supabase db push --linked --yes
