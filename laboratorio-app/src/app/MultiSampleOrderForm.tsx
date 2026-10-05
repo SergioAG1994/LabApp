@@ -46,16 +46,6 @@ function ParameterPicker({ parameters, selectedIds, onToggle }: { parameters: Pa
 const today = () => new Date().toISOString().slice(0, 10);
 const blankSample = (): SampleDraft => ({ mode: "package", packageId: "", parameterIds: [] });
 const clientDisplayName = (client: ClientOption) => `${client.name}${client.branch ? ` · ${client.branch}` : ""}`;
-const formatDate = (value: string) => new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T12:00:00`));
-function dueDate(received: string) {
-  const date = new Date(`${received}T12:00:00`);
-  let count = 0;
-  while (count < 8) {
-    date.setDate(date.getDate() + 1);
-    if (date.getDay() !== 0 && date.getDay() !== 6) count += 1;
-  }
-  return date.toISOString().slice(0, 10);
-}
 
 export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: () => Promise<void> }) {
   const [packages, setPackages] = useState<AnalysisPackage[]>([]);
@@ -375,12 +365,8 @@ export function MultiSampleOrderForm({ onCancel, onCreated }: { onCancel: () => 
           else updateSample(0, { mode: "package", packageId: event.target.value, parameterIds: [] });
         }}><option value="">Seleccionar…</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="custom">Personalizar parámetros</option></select></label>}
       </div>
-      {!multiple && samples[0].mode === "custom" && <div className="strategy-detail"><p className="selection-note">Selecciona los parámetros que integrarán esta OA personalizada.</p><ParameterPicker parameters={parameters} selectedIds={samples[0].parameterIds} onToggle={(parameterId) => toggleParameter(0, parameterId)} /><label className="check-label"><input type="checkbox" checked={saveCustomPackage} onChange={(event) => setSaveCustomPackage(event.target.checked)} />Guardar esta configuración para futuras OPs</label>{saveCustomPackage && <label className="standalone-field">Nombre del paquete reutilizable<input required value={customPackageName} onChange={(event) => setCustomPackageName(event.target.value)} placeholder="Ej. Análisis especial de descarga" /></label>}</div>}
-    </section>
-    <section className="form-card">
-      <h2>Fechas automáticas</h2>
-      <div className="summary-row"><div><span>Fecha compromiso</span><strong>{formatDate(dueDate(receivedAt))}</strong></div><div><span>Número de muestra</span><strong>Se asigna al guardar</strong></div><div><span>Número de informe</span><strong>Se asigna al emitir</strong></div></div>
       <label className="check-label"><input type="checkbox" checked={multiple} onChange={(event) => { const checked = event.target.checked; setMultiple(checked); resizeSamples(checked ? Math.max(2, sampleCount) : 1); setSelectedMultiPackage(""); if (!checked) setAnalysisStrategy(""); }} />Registrar más de una muestra en esta OP</label>
+      {!multiple && samples[0].mode === "custom" && <div className="strategy-detail"><p className="selection-note">Selecciona los parámetros que integrarán esta OA personalizada.</p><ParameterPicker parameters={parameters} selectedIds={samples[0].parameterIds} onToggle={(parameterId) => toggleParameter(0, parameterId)} /><label className="check-label"><input type="checkbox" checked={saveCustomPackage} onChange={(event) => setSaveCustomPackage(event.target.checked)} />Guardar esta configuración para futuras OPs</label>{saveCustomPackage && <label className="standalone-field">Nombre del paquete reutilizable<input required value={customPackageName} onChange={(event) => setCustomPackageName(event.target.value)} placeholder="Ej. Análisis especial de descarga" /></label>}</div>}
     </section>
     {multiple && <>
       <section className="form-card"><h2>Cantidad de muestras</h2><label className="standalone-field">¿Cuántas muestras tendrá la OP?<input type="number" min="2" max="20" value={sampleCount} disabled={analysisStrategy === "multi-existing" && Boolean(selectedMultiPackage)} onChange={(event) => resizeSamples(Number(event.target.value))} /></label></section>
