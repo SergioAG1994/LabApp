@@ -18,6 +18,6 @@ export function StaffAssignment({ staff, assignment, staffId, legacy, disabled, 
     <option value="">Seleccionar…</option>
     {!staffId && legacy && <option value="legacy" disabled>{legacy} (registro anterior)</option>}
     {staffId && !current && <option value={staffId} disabled>{legacy || "Personal registrado"}</option>}
-    {staff.filter((person) => person.id === staffId || eligibleStaff(person, assignment)).map((person) => <option key={person.id} value={person.id} disabled={!eligibleStaff(person, assignment)}>{person.full_name} ({person.initials}){!person.active ? " · inactivo" : !eligibleStaff(person, assignment) ? " · asignación anterior" : ""}</option>)}
+    {staff.filter((person) => person.id === staffId || eligibleStaff(person, assignment)).map((person) => <option key={person.id} value={person.id} disabled={!eligibleStaff(person, assignment)} title={person.full_name}>{person.initials}</option>)}
   </select>;
 }
