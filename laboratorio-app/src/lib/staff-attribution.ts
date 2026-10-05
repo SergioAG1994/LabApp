@@ -7,7 +7,10 @@ export type LaboratoryStaff = {
 };
 
 export function eligibleStaff(person: LaboratoryStaff, assignment: "analista" | "revisor" | "muestreador") {
-  return person.active && (person.functions.includes(assignment) || (assignment === "revisor" && person.functions.includes("responsable_autorizacion")));
+  return person.active && (
+    person.functions.includes(assignment)
+    || (assignment === "revisor" && person.functions.some((fn) => ["responsable_autorizacion", "analista", "muestreador"].includes(fn)))
+  );
 }
 
 // Legacy text is evidence, not an identity. Never guess who it represents.
@@ -19,22 +22,12 @@ export function missingStaffColumns(error: { code?: string; message: string } | 
   return error?.code === "42703" && /(?:analyst_staff_id|released_by_staff_id|sampler_staff_id|worksheet_revision|worksheet_sampled_at)/.test(error.message);
 }
 
-export function missingStructuredResultColumns(error: { code?: string; message: string } | null) {
-  return error?.code === "42703" && /\b(?:result_input_kind|result_type|result_numeric|result_qualifier|result_text)\b/.test(error.message);
-}
-
-// Migration 044 can lag the application without disabling 043's atomic save,
-// staff identities, and stale-edit protection. Only missing known columns retry.
+// Keep compatibility with databases that have not yet applied staff attribution.
 export async function loadWorksheetColumns<T extends { error: { code?: string; message: string } | null }>(
-  load: (capabilities: { staff: boolean; structured: boolean }) => PromiseLike<T>,
+  load: (staff: boolean) => PromiseLike<T>,
 ) {
-  let result = await load({ staff: true, structured: true });
-  let structuredResults = !missingStructuredResultColumns(result.error);
-  if (!structuredResults) result = await load({ staff: true, structured: false });
+  let result = await load(true);
   const legacyWorksheet = missingStaffColumns(result.error);
-  if (legacyWorksheet) {
-    structuredResults = false;
-    result = await load({ staff: false, structured: false });
-  }
-  return { result, legacyWorksheet, structuredResults };
+  if (legacyWorksheet) result = await load(false);
+  return { result, legacyWorksheet };
 }
