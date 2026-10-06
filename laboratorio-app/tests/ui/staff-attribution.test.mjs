@@ -31,3 +31,11 @@ test("only known missing migration columns enable legacy worksheet writes", () =
     { message: "network error worksheet_revision" },
   ]) assert.equal(missingStaffColumns(error), false);
 });
+
+test("Analista accepts active analysts and samplers, but excludes other functions", () => {
+  for (const fn of ["analista", "muestreador", "revisor", "responsable_autorizacion"]) {
+    const person = { ...analyst, functions: [fn] };
+    assert.equal(eligibleStaff(person, "analista"), ["analista", "muestreador"].includes(fn), fn);
+    assert.equal(eligibleStaff({ ...person, active: false }, "analista"), false, fn);
+  }
+});

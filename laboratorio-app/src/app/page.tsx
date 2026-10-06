@@ -545,7 +545,7 @@ export default function Home() {
                 : loadWorksheetColumns((staff) => supabase.from("worksheet_results")
                     .select(`${columns}${staff ? ", analyst_staff_id, released_by_staff_id, worksheet_revision, worksheet_sampled_at" : ""}`)
                     .eq("sample_id", entry.sampleId).order("display_order")),
-            supabase.rpc("list_assignable_staff", { p_functions: userRole === "analista" ? ["analista", "revisor", "responsable_autorizacion"] : ["analista", "revisor", "responsable_autorizacion", "muestreador"] }),
+            supabase.rpc("list_assignable_staff", { p_functions: ["analista", "revisor", "responsable_autorizacion", "muestreador"] }),
         ]);
         const { result, legacyWorksheet: legacy } = worksheet;
         if (loadId !== sampleLoadId.current) return false;
