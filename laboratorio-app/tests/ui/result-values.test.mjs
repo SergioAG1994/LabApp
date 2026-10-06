@@ -7,7 +7,7 @@ test("Libera accepts active analysts, samplers, reviewers and authorizers", () =
   for (const fn of ["analista", "muestreador", "revisor", "responsable_autorizacion"])
     assert.equal(eligibleStaff(makeStaff(fn), "revisor"), true, fn);
   assert.equal(eligibleStaff(makeStaff("muestreador", false), "revisor"), false);
-  assert.equal(eligibleStaff(makeStaff("muestreador"), "analista"), false);
+  assert.equal(eligibleStaff(makeStaff("muestreador"), "analista"), true);
 });
 
 test("worksheet loading uses ordinary result fields and retries only for missing staff columns", async () => {

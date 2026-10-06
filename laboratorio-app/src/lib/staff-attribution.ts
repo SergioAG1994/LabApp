@@ -9,6 +9,7 @@ export type LaboratoryStaff = {
 export function eligibleStaff(person: LaboratoryStaff, assignment: "analista" | "revisor" | "muestreador") {
   return person.active && (
     person.functions.includes(assignment)
+    || (assignment === "analista" && person.functions.includes("muestreador"))
     || (assignment === "revisor" && person.functions.some((fn) => ["responsable_autorizacion", "analista", "muestreador"].includes(fn)))
   );
 }
