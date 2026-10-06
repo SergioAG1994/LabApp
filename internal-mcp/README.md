@@ -62,8 +62,8 @@ capability; the token is mandatory. Docker Compose expects all three files
 
 Install Node.js 22 or newer, run `npm ci` and `npm run build` in this directory,
 then run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1`.
-The interactive prompt accepts a Linear key without echoing it. Enter preserves
-an existing key. Credentials stay outside Git under
+The masked Windows dialog accepts a Linear key with normal Ctrl+V paste and
+rejects incomplete keys and control characters before saving. Credentials stay outside Git under
 `%LOCALAPPDATA%\LabApp\internal-mcp\secrets`, protected by a Windows ACL for the
 current user and SYSTEM. Never paste credentials into an agent conversation.
 
@@ -85,7 +85,8 @@ No live issues or database rows are modified. Missing upstream credentials
 leave their tools disabled; passing health alone is not full activation.
 Use `-InitializeOnly` to create credential files without starting or registering
 the service, or `-NoPrompt` after supplying the files through a private editor.
-Stop the existing server before rerunning setup with changed credentials.
+Rerunning setup restarts only the current user's verified LabApp runtime on port
+3100; it refuses to stop an unrelated listener.
 
 Some hosted Supabase projects expose PUBLIC-executable large-object routines
 owned by `supabase_admin`. A normal `postgres` login cannot revoke those grants.
