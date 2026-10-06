@@ -23,7 +23,9 @@ foreach ($trustee in @($identity.User, (New-Object Security.Principal.SecurityId
     $rule = New-Object Security.AccessControl.FileSystemAccessRule($trustee, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     $acl.AddAccessRule($rule)
 }
-Set-Acl -LiteralPath $StateDirectory -AclObject $acl
+# Use .NET directly: child PowerShell sessions may inherit a PSModulePath that
+# cannot load Microsoft.PowerShell.Security's Set-Acl command.
+[IO.Directory]::SetAccessControl($StateDirectory, $acl)
 foreach ($folder in @('secrets', 'uploads')) {
     New-Item -ItemType Directory -Path (Join-Path $StateDirectory $folder) -Force | Out-Null
 }
@@ -41,6 +43,7 @@ foreach ($name in @('database_url', 'linear_api_key')) {
 }
 if ($InitializeOnly) { Write-Host 'Private credential directory initialized.'; exit 0 }
 if (-not $NoPrompt) {
+    $Host.UI.RawUI.WindowTitle = 'LabApp - Configurar Linear'
     Write-Host 'Pega la clave de Linear. La entrada permanece oculta; Enter conserva la clave existente.'
     $secure = Read-Host 'Clave de Linear' -AsSecureString
     if ($secure.Length -gt 0) {
