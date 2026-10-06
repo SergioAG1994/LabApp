@@ -44,21 +44,13 @@ foreach ($name in @('database_url', 'linear_api_key')) {
 if ($InitializeOnly) { Write-Host 'Private credential directory initialized.'; exit 0 }
 if (-not $NoPrompt) {
     $Host.UI.RawUI.WindowTitle = 'LabApp - Configurar Linear'
-    Write-Host 'Pega la clave de Linear. La entrada permanece oculta; Enter conserva la clave existente.'
-    $secure = Read-Host 'Clave de Linear' -AsSecureString
-    if ($secure.Length -gt 0) {
-        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-        try {
-            $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer).Trim()
-            if ($plain.Length -eq 0) { throw 'The key is empty.' }
-            [IO.File]::WriteAllText((Join-Path $StateDirectory 'secrets\linear_api_key'), $plain + "`n", $utf8)
-        } finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-            $plain = $null
-            $secure.Dispose()
-        }
-    }
+    & (Join-Path $PSScriptRoot 'collect-linear-key.ps1') -KeyFile (Join-Path $StateDirectory 'secrets\linear_api_key')
 }
+$linearKey = [IO.File]::ReadAllText((Join-Path $StateDirectory 'secrets\linear_api_key')).Trim()
+if ($linearKey.Length -gt 0 -and $linearKey -notmatch '^[A-Za-z0-9_-]{20,}$') {
+    throw 'The stored Linear key is incomplete. Run setup without -NoPrompt to replace it privately.'
+}
+$linearKey = $null
 $token = [IO.File]::ReadAllText($tokenFile).Trim()
 if ($token.Length -lt 32) { throw 'Invalid server token.' }
 [Environment]::SetEnvironmentVariable('LABAPP_MCP_TOKEN', $token, 'User')
@@ -67,6 +59,18 @@ $codex = (Get-Command codex.exe -ErrorAction Stop).Source
 & $codex mcp add labapp-internal --url http://127.0.0.1:3100/mcp --bearer-token-env-var LABAPP_MCP_TOKEN
 if ($LASTEXITCODE -ne 0) { throw 'Codex configuration failed.' }
 $runtime = Join-Path $StateDirectory 'runtime'
+$listener = Get-NetTCPConnection -LocalPort 3100 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($listener) {
+    $serverProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
+    $owner = Invoke-CimMethod -InputObject $serverProcess -MethodName GetOwnerSid
+    $expectedEntry = Join-Path $runtime 'dist\index.js'
+    if ($owner.Sid -ne $identity.User.Value -or $serverProcess.ExecutablePath -ne $node -or
+        -not $serverProcess.CommandLine.Contains($expectedEntry)) {
+        throw 'Port 3100 belongs to another process; it was not stopped.'
+    }
+    Stop-Process -Id $listener.OwningProcess -ErrorAction Stop
+    Start-Sleep -Seconds 2
+}
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $appDirectory 'package.json') -Destination $runtime -Force
 foreach ($folder in @('dist', 'node_modules')) {
