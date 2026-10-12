@@ -2,17 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { employeeNumber, type StaffFunction, type StaffRecord } from "@/lib/personnel";
+import { PersonnelDetails } from "./PersonnelDetails";
+import styles from "./PersonnelDetails.module.css";
 
-type StaffFunction = "analista" | "muestreador" | "revisor" | "responsable_autorizacion";
-type StaffRecord = {
-  id: string;
-  internal_id: number;
-  full_name: string;
-  initials: string;
-  position_title: string;
-  functions: StaffFunction[];
-  active: boolean;
-};
 
 const functionOptions: Array<{ value: StaffFunction; label: string }> = [
   { value: "analista", label: "Analista" },
@@ -32,6 +25,7 @@ export function PersonnelDirectory({ canManage, mode, userId, onCancel }: { canM
   const [changingId, setChangingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [selectedPerson, setSelectedPerson] = useState<StaffRecord | null>(null);
 
   async function loadStaff() {
     const { data, error } = await supabase.from("laboratory_staff")
@@ -117,8 +111,9 @@ export function PersonnelDirectory({ canManage, mode, userId, onCancel }: { canM
     {mode === "list" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Personal del laboratorio</h2><p>{staff.filter((person) => person.active).length} activos · {staff.length} registrados</p></div><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar personal" aria-label="Buscar personal" /></div>
       <div className="table-wrap"><table className="personnel-table"><thead><tr><th>ID</th><th>Nombre completo</th><th>Iniciales</th><th>Puesto o cargo</th><th>Funciones</th><th>Estado</th>{canManage && <th>Acción</th>}</tr></thead>
-        <tbody>{visibleStaff.length === 0 ? <tr><td colSpan={canManage ? 7 : 6}>No hay personal registrado.</td></tr> : visibleStaff.map((person) => <tr key={person.id}><td><strong>{String(person.internal_id).padStart(4, "0")}</strong></td><td>{person.full_name}</td><td><strong>{person.initials}</strong></td><td>{person.position_title}</td><td><div className="personnel-function-tags">{person.functions.map((item) => <span key={item}>{functionOptions.find((option) => option.value === item)?.label || item}</span>)}</div></td><td><span className={person.active ? "status status-green" : "status status-gray"}>{person.active ? "Activo" : "Inactivo"}</span></td>{canManage && <td><button type="button" className={person.active ? "personnel-status-button deactivate" : "personnel-status-button"} disabled={changingId === person.id} onClick={() => void toggleActive(person)}>{changingId === person.id ? "…" : person.active ? "Desactivar" : "Reactivar"}</button></td>}</tr>)}</tbody>
+        <tbody>{visibleStaff.length === 0 ? <tr><td colSpan={canManage ? 7 : 6}>No hay personal registrado.</td></tr> : visibleStaff.map((person) => <tr key={person.id}><td><button type="button" className={styles.tableLink} onClick={() => setSelectedPerson(person)} aria-label={`Abrir ficha del empleado ${employeeNumber(person.internal_id)}`}>{employeeNumber(person.internal_id)}</button></td><td><button type="button" className={styles.tableLink} onClick={() => setSelectedPerson(person)}>{person.full_name}</button></td><td><strong>{person.initials}</strong></td><td>{person.position_title}</td><td><div className="personnel-function-tags">{person.functions.map((item) => <span key={item}>{functionOptions.find((option) => option.value === item)?.label || item}</span>)}</div></td><td><span className={person.active ? "status status-green" : "status status-gray"}>{person.active ? "Activo" : "Inactivo"}</span></td>{canManage && <td><button type="button" className={person.active ? "personnel-status-button deactivate" : "personnel-status-button"} disabled={changingId === person.id} onClick={() => void toggleActive(person)}>{changingId === person.id ? "…" : person.active ? "Desactivar" : "Reactivar"}</button></td>}</tr>)}</tbody>
       </table></div>
     </section>}
+    {selectedPerson && <PersonnelDetails key={selectedPerson.id} person={selectedPerson} canManage={canManage} onClose={() => setSelectedPerson(null)} onSaved={() => { void loadStaff(); }} />}
   </div>;
 }
