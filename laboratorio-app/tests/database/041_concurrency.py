@@ -50,6 +50,7 @@ def test(db):
       alter table public.analysis_orders enable trigger analysis_orders_protect_workflow;
       delete from public.audit_events where actor_id::text like '41000000%';
       delete from public.package_parameters where package_id::text like '41000000%';
+      delete from public.staff_parameter_authorizations where staff_id::text like '41000000%';
       delete from public.analysis_packages where id::text like '41000000%';
       delete from public.parameters where id::text like '41000000%';
       delete from public.clients where id::text like '41000000%';
