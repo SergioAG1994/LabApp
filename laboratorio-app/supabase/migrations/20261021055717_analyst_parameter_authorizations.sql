@@ -238,13 +238,13 @@ returns bigint language plpgsql security definer set search_path = '' as $$
 declare
   order_id uuid; worksheet public.analysis_worksheets; entry jsonb; previous public.analysis_results;
   role_name public.app_role := (select public.current_role());
-  analyst_id uuid := (select private.current_analyst_staff_id());
+  v_analyst_staff_id uuid := (select private.current_analyst_staff_id());
   expected_rows integer;
 begin
   if role_name is null or (select auth.uid()) is null or role_name not in ('administrador', 'recepcion', 'analista') then
     raise exception 'No tienes permiso para guardar resultados';
   end if;
-  if role_name = 'analista' and analyst_id is null then raise exception 'Tu cuenta no está vinculada con tu ficha de Personal'; end if;
+  if role_name = 'analista' and v_analyst_staff_id is null then raise exception 'Tu cuenta no está vinculada con tu ficha de Personal'; end if;
   if jsonb_typeof(p_rows) is distinct from 'array' or p_expected_revision is null then
     raise exception 'La hoja y su revisión son obligatorias';
   end if;
@@ -265,7 +265,7 @@ begin
   where ar.worksheet_id = worksheet.id
     and (role_name <> 'analista' or exists (
       select 1 from public.staff_parameter_authorizations a
-      where a.staff_id = analyst_id and a.parameter_id = ar.parameter_id
+      where a.staff_id = v_analyst_staff_id and a.parameter_id = ar.parameter_id
         and a.authorization_kind = 'internal' and a.authorized_at <= (now() at time zone 'America/Mexico_City')::date
     ));
   if expected_rows = 0 or jsonb_array_length(p_rows) <> expected_rows
@@ -278,7 +278,7 @@ begin
     where ar.id = (entry->>'id')::uuid and ar.worksheet_id = worksheet.id
       and (role_name <> 'analista' or exists (
         select 1 from public.staff_parameter_authorizations a
-        where a.staff_id = analyst_id and a.parameter_id = ar.parameter_id
+        where a.staff_id = v_analyst_staff_id and a.parameter_id = ar.parameter_id
           and a.authorization_kind = 'internal' and a.authorized_at <= (now() at time zone 'America/Mexico_City')::date
       ));
     if not found then raise exception 'Un resultado no pertenece a tus parámetros autorizados'; end if;
@@ -288,8 +288,8 @@ begin
         result_value = entry->>'result_value',
         result_input_kind = case when entry ? 'result_input_kind' then entry->>'result_input_kind' else previous.result_input_kind end,
         analyst_reference = entry->>'analyst_reference', analyzed_at = nullif(entry->>'analyzed_at', '')::date,
-        analyst_name = (select s.initials from public.laboratory_staff s where s.id = analyst_id),
-        analyst_staff_id = analyst_id
+        analyst_name = (select s.initials from public.laboratory_staff s where s.id = v_analyst_staff_id),
+        analyst_staff_id = v_analyst_staff_id
       where id = previous.id;
     else
       if nullif(entry->>'analyst_staff_id', '') is null and nullif(btrim(entry->>'analyst_name'), '') is not null
