@@ -62,6 +62,9 @@ with loaded as (
 )
 select public.save_analysis_worksheet('41000000-0000-0000-0000-000000000030',revision,rows) from payload;
 select set_config('request.jwt.claim.sub', '41000000-0000-0000-0000-000000000004', true);
+update public.analysis_results
+set released_by='SR',released_by_staff_id='41000000-0000-0000-0000-000000000041'
+where worksheet_id=(select id from public.analysis_worksheets where sample_id='41000000-0000-0000-0000-000000000030');
 select public.issue_report('41000000-0000-0000-0000-000000000020','9999');
 -- Current reissuance remains supported; this PR does not add report versioning.
 select public.issue_report('41000000-0000-0000-0000-000000000020','9999');
