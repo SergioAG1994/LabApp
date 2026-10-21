@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { employeeNumber, type StaffRecord, type StaffDetails, type StaffAuthorization, type PersonnelParameter } from "@/lib/personnel";
 import styles from "./PersonnelDetails.module.css";
+import { PersonnelTraining } from "./PersonnelTraining";
 
 function displayDate(value: string) { return value.split("-").reverse().join("/"); }
 function today() { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); }
@@ -70,6 +71,9 @@ function AuthorizationSection({ kind, personId, parameters, records, canManage, 
 export function PersonnelDetails({ person, canManage, onClose, onSaved }: { person: StaffRecord; canManage: boolean; onClose: () => void; onSaved: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const drafts = useRef(new Set<string>());
+  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [activeTab, setActiveTab] = useState(0);
+  const [trainingOpened, setTrainingOpened] = useState(false);
   const [details, setDetails] = useState<StaffDetails | null>(null);
   const [parameters, setParameters] = useState<PersonnelParameter[]>([]);
   const [authorizations, setAuthorizations] = useState<StaffAuthorization[]>([]);
@@ -132,6 +136,10 @@ export function PersonnelDetails({ person, canManage, onClose, onSaved }: { pers
   function savedAuthorization(record: StaffAuthorization) {
     setAuthorizations((current) => [...current.filter((item) => item.id !== record.id), record].sort((a, b) => a.authorized_at.localeCompare(b.authorized_at)));
   }
+  function selectTab(index: number) {
+    setActiveTab(index);
+    if (index === 1) setTrainingOpened(true);
+  }
 
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby="personnel-detail-title" onCancel={(event) => { event.preventDefault(); close(); }}>
     <header className={styles.header}><div><p className={styles.eyebrow}>FICHA DE PERSONAL · EMPLEADO {employeeNumber(person.internal_id)}</p>
@@ -140,6 +148,21 @@ export function PersonnelDetails({ person, canManage, onClose, onSaved }: { pers
     <div className={styles.body}>
       {message && <p className={styles.notice} role="status">{message}</p>}
       {loading ? <p>Cargando ficha…</p> : details && <>
+        <div className={styles.tabs} role="tablist" aria-label="Secciones de la ficha">
+          {["Información general", "Capacitación"].map((label, index) => <button key={label} type="button" role="tab"
+            ref={(element) => { tabs.current[index] = element; }}
+            id={`personnel-tab-${index}`} aria-controls={`personnel-panel-${index}`} aria-selected={activeTab === index}
+            tabIndex={activeTab === index ? 0 : -1} onClick={() => selectTab(index)}
+            onKeyDown={(event) => {
+              let next: number;
+              if (event.key === "ArrowRight" || event.key === "ArrowLeft") next = 1 - index;
+              else if (event.key === "Home") next = 0;
+              else if (event.key === "End") next = 1;
+              else return;
+              event.preventDefault(); selectTab(next); tabs.current[next]?.focus();
+            }}>{label}</button>)}
+        </div>
+        <div role="tabpanel" id="personnel-panel-0" aria-labelledby="personnel-tab-0" hidden={activeTab !== 0} tabIndex={0}>
         <section className={styles.section}><h3>Información general</h3><p className={styles.help}>Completa la formación y la fecha real de ingreso al laboratorio.</p>
           <form onSubmit={saveGeneral}><div className={styles.grid}>
             <label>Número de empleado<input readOnly disabled value={employeeNumber(details.internal_id)} /></label>
@@ -151,6 +174,11 @@ export function PersonnelDetails({ person, canManage, onClose, onSaved }: { pers
           </div>{canManage && <div className={styles.actions}><button className="button primary" disabled={busy || !dirty}>{saving ? "Guardando…" : "Guardar información general"}</button></div>}</form>
         </section>
         {(["internal", "ema"] as const).map((kind) => <AuthorizationSection key={kind} kind={kind} personId={person.id} parameters={parameters} records={authorizations} canManage={canManage} locked={busy} onSaved={savedAuthorization} onBusy={setAuthorizationBusy} onMessage={setMessage} onDraft={(section, open) => { if (open) drafts.current.add(section); else drafts.current.delete(section); }} />)}
+        </div>
+        <div role="tabpanel" id="personnel-panel-1" aria-labelledby="personnel-tab-1" hidden={activeTab !== 1} tabIndex={0}>
+          {trainingOpened && <PersonnelTraining personId={person.id} canManage={canManage} locked={busy} onBusy={setAuthorizationBusy}
+            onDraft={(open) => { if (open) drafts.current.add("training"); else drafts.current.delete("training"); }} />}
+        </div>
       </>}
     </div>
   </dialog>;
