@@ -1,14 +1,21 @@
 begin;
 insert into auth.users(id) values
  ('43000000-0000-0000-0000-000000000001'),('43000000-0000-0000-0000-000000000002'),('43000000-0000-0000-0000-000000000003');
-update public.profiles set role=case right(id::text,1) when '2' then 'analista'::public.app_role when '3' then 'administrador'::public.app_role else 'recepcion'::public.app_role end where id::text like '43000000%';
+update public.profiles set role=case right(id::text,1) when '3' then 'administrador'::public.app_role else 'recepcion'::public.app_role end where id::text like '43000000%';
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
 insert into public.laboratory_staff(id,full_name,initials,position_title,functions) values
  ('43000000-0000-0000-0000-000000000010','Analyst One','AO','Analyst',array['analista']),
  ('43000000-0000-0000-0000-000000000011','Reviewer One','RO','Reviewer',array['revisor']),
  ('43000000-0000-0000-0000-000000000012','Sampler One','SO','Sampler',array['muestreador']);
+update public.profiles set role='analista',laboratory_staff_id='43000000-0000-0000-0000-000000000010'
+where id='43000000-0000-0000-0000-000000000002';
 insert into public.clients(id,name) values('43000000-0000-0000-0000-000000000020','Audit client');
-insert into public.parameters(id,name) values('43000000-0000-0000-0000-000000000030','Audit parameter 1'),('43000000-0000-0000-0000-000000000031','Audit parameter 2');
+insert into public.parameters(id,name,method_reference) values
+ ('43000000-0000-0000-0000-000000000030','Audit parameter 1','AUDIT-METHOD-1'),
+ ('43000000-0000-0000-0000-000000000031','Audit parameter 2','AUDIT-METHOD-2');
+insert into public.staff_parameter_authorizations(staff_id,parameter_id,authorization_kind,method_reference,authorized_at) values
+ ('43000000-0000-0000-0000-000000000010','43000000-0000-0000-0000-000000000030','internal','ignored',current_date),
+ ('43000000-0000-0000-0000-000000000010','43000000-0000-0000-0000-000000000031','internal','ignored',current_date);
 set local role authenticated;
 select public.create_sample_entry_batch_auto_with_staff('43000000-0000-0000-0000-000000000020','[{"parameter_ids":["43000000-0000-0000-0000-000000000030","43000000-0000-0000-0000-000000000031"]}]',true,'SAMPLE-1','2087-01-01',p_sampler_staff_id=>'43000000-0000-0000-0000-000000000012');
 select pg_temp.assert((select sampler_name='Sampler One' and sampler_staff_id='43000000-0000-0000-0000-000000000012' from public.analysis_orders where op_number='28701001'),'sampler canonical name and ID');
@@ -49,7 +56,7 @@ select pg_temp.assert_raises($q$select public.save_analysis_worksheet((select sa
 select pg_temp.assert_raises($q$select public.save_analysis_worksheet((select sample_id from state),(select original_revision from state),(select jsonb_set(jsonb_set(rows,'{0,analyst_staff_id}','null'),'{0,analyst_name}','"Made up"') from payload))$q$,'directorio');
 reset role;
 select pg_temp.assert((select count(*)=(select n from audit_count) from public.audit_events),'failed saves leave no audit fragments');
-update public.laboratory_staff set active=false,full_name='Renamed analyst',initials='NEW' where id='43000000-0000-0000-0000-000000000010';
+update public.laboratory_staff set full_name='Renamed analyst',initials='NEW' where id='43000000-0000-0000-0000-000000000010';
 set local role authenticated;
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000002',true);
 -- Unchanged inactive credited identity stays valid and retains historical spelling.
@@ -59,6 +66,7 @@ select pg_temp.assert((select bool_and(worksheet_sampled_at='2087-01-01') from p
 select pg_temp.assert(not exists(select 1 from public.clients),'analyst cannot see client');
 select pg_temp.assert(not exists(select 1 from public.audit_events),'analyst cannot read client-bearing history');
 reset role;
+update public.laboratory_staff set active=false where id='43000000-0000-0000-0000-000000000010';
 -- Stage compatibility: old clients can still write unlinked legacy text; every
 -- such edit changes revision and is audited. New RPC preserves it unchanged.
 update public.analysis_results set analyst_staff_id=null,analyst_name='Historic unknown' where worksheet_id=(select worksheet_id from state);
