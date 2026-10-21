@@ -288,7 +288,11 @@ begin
         result_value = entry->>'result_value',
         result_input_kind = case when entry ? 'result_input_kind' then entry->>'result_input_kind' else previous.result_input_kind end,
         analyst_reference = entry->>'analyst_reference', analyzed_at = nullif(entry->>'analyzed_at', '')::date,
-        analyst_name = (select s.initials from public.laboratory_staff s where s.id = v_analyst_staff_id),
+        analyst_name = case
+          when previous.analyst_staff_id = v_analyst_staff_id
+            and nullif(btrim(previous.analyst_name), '') is not null then previous.analyst_name
+          else (select s.initials from public.laboratory_staff s where s.id = v_analyst_staff_id)
+        end,
         analyst_staff_id = v_analyst_staff_id
       where id = previous.id;
     else
