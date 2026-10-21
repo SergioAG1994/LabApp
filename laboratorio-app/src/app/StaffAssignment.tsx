@@ -11,7 +11,8 @@ type Props = {
 
 export function StaffAssignment({ staff, assignment, staffId, legacy, disabled, onChange }: Props) {
   const current = staff.find((person) => person.id === staffId);
-  return <select style={{ width: "100%", minWidth: 0 }} title={current?.full_name || legacy || "Seleccionar personal"} aria-label={assignment === "analista" ? "Analista" : "Libera"} value={staffId || (legacy ? "legacy" : "")} disabled={disabled} onChange={(event) => {
+  const noEligibleAssignee = !staff.some((person) => eligibleStaff(person, assignment));
+  return <select style={{ width: "100%", minWidth: 0 }} title={current?.full_name || legacy || "Seleccionar personal"} aria-label={assignment === "analista" ? "Analista" : "Libera"} value={staffId || (legacy ? "legacy" : "")} disabled={disabled || noEligibleAssignee} onChange={(event) => {
     const person = staff.find((item) => item.id === event.target.value);
     onChange(person?.id || null, person?.initials || null);
   }}>
