@@ -8,10 +8,15 @@ def test(db):
     db.sql("""
      insert into auth.users(id) values('43100000-0000-0000-0000-000000000001');
      insert into auth.users(id) values('43100000-0000-0000-0000-000000000008');
-     update public.profiles set role='analista' where id='43100000-0000-0000-0000-000000000001';
      update public.profiles set role='recepcion' where id='43100000-0000-0000-0000-000000000008';
      insert into public.clients(id,name) values('43100000-0000-0000-0000-000000000002','Concurrent worksheet client');
-     insert into public.parameters(id,name) values('43100000-0000-0000-0000-000000000003','Concurrent result');
+     insert into public.parameters(id,name,method_reference) values('43100000-0000-0000-0000-000000000003','Concurrent result','CONCURRENT-METHOD');
+     insert into public.laboratory_staff(id,full_name,initials,position_title,functions)
+       values('43100000-0000-0000-0000-000000000009','Concurrent Analyst','CA','Analyst',array['analista']);
+     update public.profiles set role='analista',laboratory_staff_id='43100000-0000-0000-0000-000000000009'
+       where id='43100000-0000-0000-0000-000000000001';
+     insert into public.staff_parameter_authorizations(staff_id,parameter_id,authorization_kind,method_reference,authorized_at)
+       values('43100000-0000-0000-0000-000000000009','43100000-0000-0000-0000-000000000003','internal','ignored',current_date);
      insert into public.analysis_orders(id,op_number,client_id,received_at,due_date) values('43100000-0000-0000-0000-000000000004','concurrent-save','43100000-0000-0000-0000-000000000002','2088-01-01','2088-01-02');
      insert into public.samples(id,order_id,sample_code) values('43100000-0000-0000-0000-000000000005','43100000-0000-0000-0000-000000000004','concurrent-save');
      insert into public.analysis_worksheets(id,sample_id) values('43100000-0000-0000-0000-000000000006','43100000-0000-0000-0000-000000000005');

@@ -9,15 +9,17 @@ type ManagedUser = {
   email: string;
   fullName: string;
   role: AppRole;
+  laboratoryStaffId: string | null;
   createdAt: string;
   confirmedAt: string | null;
   lastSignInAt: string | null;
 };
+type AnalystStaffOption = { id: string; full_name: string; initials: string; linkedUserId: string | null };
 
 const roleOptions: Array<{ value: AppRole; label: string; description: string }> = [
   { value: "administrador", label: "Administrador", description: "Acceso completo: usuarios, personal, operación, parámetros e informes." },
   { value: "recepcion", label: "Recepción", description: "Acceso a clientes, OP, muestras, parámetros e informes; sin los paneles de personal y Reportes." },
-  { value: "analista", label: "Analista", description: "Acceso únicamente a Muestras para consultar hojas de trabajo y capturar resultados." },
+  { value: "analista", label: "Analista", description: "Acceso únicamente a Muestras y a los parámetros internos vigentes autorizados en su ficha de Personal." },
 ];
 
 async function adminRequest(path: string, init?: RequestInit) {
@@ -27,7 +29,7 @@ async function adminRequest(path: string, init?: RequestInit) {
     ...init,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}`, ...init?.headers },
   });
-  const payload = await response.json() as { error?: string; message?: string; users?: ManagedUser[] };
+  const payload = await response.json() as { error?: string; message?: string; users?: ManagedUser[]; analystStaffOptions?: AnalystStaffOption[] };
   if (!response.ok) throw new Error(payload.error || "No se pudo completar la operación.");
   return payload;
 }
@@ -37,11 +39,13 @@ function formatAccountDate(value: string | null) {
   return new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
 }
 
-export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list" | "create"; currentUserId: string; onCancel: () => void }) {
+export function UserManagement({ mode, currentUserId, onCancel, onStartPreview }: { mode: "list" | "create"; currentUserId: string; onCancel: () => void; onStartPreview: (role: Exclude<AppRole, "administrador">) => void }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AppRole>("recepcion");
+  const [laboratoryStaffId, setLaboratoryStaffId] = useState("");
+  const [analystStaffOptions, setAnalystStaffOptions] = useState<AnalystStaffOption[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -53,6 +57,7 @@ export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list"
     try {
       const payload = await adminRequest("/api/admin/users");
       setUsers(payload.users || []);
+      setAnalystStaffOptions(payload.analystStaffOptions || []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron cargar las cuentas.");
     } finally {
@@ -78,9 +83,9 @@ export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list"
     try {
       const payload = await adminRequest("/api/admin/users", {
         method: "POST",
-        body: JSON.stringify({ fullName, email, role }),
+        body: JSON.stringify({ fullName, email, role, laboratoryStaffId: role === "analista" ? laboratoryStaffId : null }),
       });
-      setFullName(""); setEmail(""); setRole("recepcion");
+      setFullName(""); setEmail(""); setRole("recepcion"); setLaboratoryStaffId("");
       setMessage(payload.message || "Invitación enviada.");
       await loadUsers();
     } catch (error) {
@@ -92,6 +97,10 @@ export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list"
 
   async function changeRole(user: ManagedUser, nextRole: AppRole) {
     if (user.role === nextRole) return;
+    if (nextRole === "analista" && !user.laboratoryStaffId) {
+      setMessage("Primero vincula esta cuenta con una persona desde “Personal vinculado”.");
+      return;
+    }
     setChangingId(user.id);
     setMessage("");
     try {
@@ -99,13 +108,29 @@ export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list"
         method: "PATCH",
         body: JSON.stringify({ userId: user.id, role: nextRole }),
       });
-      setUsers((current) => current.map((item) => item.id === user.id ? { ...item, role: nextRole } : item));
+      setUsers((current) => current.map((item) => item.id === user.id ? { ...item, role: nextRole, laboratoryStaffId: nextRole === "analista" ? item.laboratoryStaffId : null } : item));
       setMessage(payload.message || "Permisos actualizados.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo cambiar el rol.");
     } finally {
       setChangingId(null);
     }
+  }
+
+  async function linkAnalyst(user: ManagedUser, staffId: string) {
+    if (!staffId && user.role !== "analista") return;
+    const nextRole: AppRole = staffId ? "analista" : "recepcion";
+    setChangingId(user.id); setMessage("");
+    try {
+      const payload = await adminRequest("/api/admin/users", {
+        method: "PATCH",
+        body: JSON.stringify({ userId: user.id, role: nextRole, laboratoryStaffId: staffId || null }),
+      });
+      setUsers((current) => current.map((item) => item.id === user.id ? { ...item, role: nextRole, laboratoryStaffId: staffId || null } : item));
+      setMessage(payload.message || (staffId ? "Cuenta vinculada al personal Analista." : "Se retiró el vínculo y la cuenta pasó a Recepción."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo vincular la cuenta con Personal.");
+    } finally { setChangingId(null); }
   }
 
   return <div className="user-management">
@@ -115,7 +140,8 @@ export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list"
       <div className="form-grid">
         <label>Nombre completo<input required value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
         <label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <label>Permisos<select value={role} onChange={(event) => setRole(event.target.value as AppRole)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <label>Permisos<select value={role} onChange={(event) => { const next = event.target.value as AppRole; setRole(next); if (next !== "analista") setLaboratoryStaffId(""); }}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        {role === "analista" && <label>Persona de Personal<select required value={laboratoryStaffId} onChange={(event) => setLaboratoryStaffId(event.target.value)}><option value="">Selecciona a quién pertenece la cuenta</option>{analystStaffOptions.filter((staff) => !staff.linkedUserId).map((staff) => <option key={staff.id} value={staff.id}>{staff.full_name} ({staff.initials})</option>)}</select></label>}
       </div>
       <p className="role-help">{roleOptions.find((option) => option.value === role)?.description}</p>
       <div className="form-actions"><button type="button" className="button secondary" disabled={saving} onClick={onCancel}>Cancelar</button><button className="button primary" disabled={saving}>{saving ? "Enviando…" : "Enviar invitación"}</button></div>
@@ -123,8 +149,9 @@ export function UserManagement({ mode, currentUserId, onCancel }: { mode: "list"
     {message && <p className="auth-message" role="status">{message}</p>}
     {mode === "list" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Cuentas con acceso</h2><p>{users.length} usuarios registrados</p></div><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar usuario" aria-label="Buscar usuario" /></div>
-      <div className="table-wrap"><table className="users-table"><thead><tr><th>Usuario</th><th>Correo</th><th>Permisos</th><th>Estado</th><th>Último acceso</th></tr></thead><tbody>
-        {loading ? <tr><td colSpan={5}>Cargando cuentas…</td></tr> : visibleUsers.length === 0 ? <tr><td colSpan={5}>No se encontraron cuentas.</td></tr> : visibleUsers.map((user) => <tr key={user.id}><td><strong>{user.fullName || "Sin nombre"}</strong>{user.id === currentUserId && <span>Tu cuenta</span>}</td><td>{user.email}</td><td><select aria-label={`Permisos de ${user.fullName || user.email}`} value={user.role} disabled={changingId === user.id || user.id === currentUserId} onChange={(event) => void changeRole(user, event.target.value as AppRole)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td><td><span className={user.confirmedAt ? "status status-green" : "status status-amber"}>{user.confirmedAt ? "Activa" : "Invitación pendiente"}</span></td><td>{formatAccountDate(user.lastSignInAt)}</td></tr>)}
+      <div className="role-preview-tools"><div><strong>Vista previa de permisos</strong><span>Revisa qué paneles muestra cada rol sin cambiar cuentas ni permisos reales.</span></div><div className="role-preview-actions"><button type="button" className="button secondary" onClick={() => onStartPreview("recepcion")}>Ver como Recepción</button><button type="button" className="button secondary" onClick={() => onStartPreview("analista")}>Ver como Analista</button></div></div>
+      <div className="table-wrap"><table className="users-table"><thead><tr><th>Usuario</th><th>Correo</th><th>Permisos</th><th>Personal vinculado</th><th>Estado</th><th>Último acceso</th></tr></thead><tbody>
+        {loading ? <tr><td colSpan={6}>Cargando cuentas…</td></tr> : visibleUsers.length === 0 ? <tr><td colSpan={6}>No se encontraron cuentas.</td></tr> : visibleUsers.map((user) => <tr key={user.id}><td><strong>{user.fullName || "Sin nombre"}</strong>{user.id === currentUserId && <span>Tu cuenta</span>}</td><td>{user.email}</td><td><select aria-label={`Permisos de ${user.fullName || user.email}`} value={user.role} disabled={changingId === user.id || user.id === currentUserId} onChange={(event) => void changeRole(user, event.target.value as AppRole)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td><td><select aria-label={`Personal vinculado a ${user.fullName || user.email}`} value={user.laboratoryStaffId || ""} disabled={changingId === user.id || user.id === currentUserId} onChange={(event) => void linkAnalyst(user, event.target.value)}><option value="">{user.role === "analista" ? "Desvincular (cambia a Recepción)" : "No vinculado"}</option>{analystStaffOptions.filter((staff) => !staff.linkedUserId || staff.linkedUserId === user.id).map((staff) => <option key={staff.id} value={staff.id}>{staff.full_name} ({staff.initials})</option>)}</select></td><td><span className={user.confirmedAt ? "status status-green" : "status status-amber"}>{user.confirmedAt ? "Activa" : "Invitación pendiente"}</span></td><td>{formatAccountDate(user.lastSignInAt)}</td></tr>)}
       </tbody></table></div>
     </section>}
   </div>;

@@ -1,5 +1,6 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { MultiSampleOrderForm } from "./MultiSampleOrderForm";
@@ -81,6 +82,13 @@ type StaffSample = {
     captured_results: number;
     completion_percent: number;
 };
+type CompletedStaffSample = {
+    sample_id: string;
+    sample_code: string;
+    received_at: string | null;
+    issued_at: string | null;
+    report_number: string;
+};
 type IssuedReport = {
     orderId: string;
     reportNumber: string;
@@ -107,6 +115,9 @@ function isPastDueDate(value: string | null) {
     today.setHours(0, 0, 0, 0);
     return dueDate < today;
 }
+function RolePreviewGuard({ role, onExit }: { role: Exclude<AppRole, "administrador">; onExit: () => void }) {
+    return createPortal(<div className="role-preview-blocker"><div className="role-preview-banner" role="status"><span>Vista previa como <strong>{role === "recepcion" ? "Recepción" : "Analista"}</strong>. Solo lectura: tu cuenta sigue siendo Administrador y los permisos reales no cambian.</span><button type="button" className="button secondary" onClick={onExit}>Salir de vista previa</button></div></div>, document.body);
+}
 export default function Home() {
     const [session, setSession] = useState<Session | null>(null);
     const [authReady, setAuthReady] = useState(false);
@@ -116,6 +127,8 @@ export default function Home() {
     const [authLoading, setAuthLoading] = useState(false);
     const [view, setView] = useState<"entries" | "new" | "clients" | "samples" | "parameters" | "personnel" | "users" | "reports">("entries");
     const [userRole, setUserRole] = useState<AppRole | null>(null);
+    const [previewRole, setPreviewRole] = useState<Exclude<AppRole, "administrador"> | null>(null);
+    const activeRole = previewRole ?? userRole;
     const [entries, setEntries] = useState<Entry[]>([]);
     const [query, setQuery] = useState("");
     const [showCancelled, setShowCancelled] = useState(false);
@@ -174,9 +187,12 @@ export default function Home() {
     const [personnelDirectoryMode, setPersonnelDirectoryMode] = useState<"list" | "create">("list");
     const [userManagementMode, setUserManagementMode] = useState<"list" | "create">("list");
     const [staffSamples, setStaffSamples] = useState<StaffSample[]>([]);
+    const [completedStaffSamples, setCompletedStaffSamples] = useState<CompletedStaffSample[]>([]);
+    const [sampleListTab, setSampleListTab] = useState<"open" | "completed">("open");
     const [sampleQuery, setSampleQuery] = useState("");
     const [reportQuery, setReportQuery] = useState("");
     const [reportYear, setReportYear] = useState("all");
+    const [reportSampleIdentifications, setReportSampleIdentifications] = useState<Record<string, string[]>>({});
     async function loadEntries() {
         const entryColumns = "id, op_number, status, sampler_name, quotation_number, received_at, sampled_at, due_date, report_number, issued_at, clients(name, branch, address, rfc, phone, contact_name), samples(id, sample_code, sampling_number, analysis_order_created_at, analysis_label, analysis_packages(code, name))";
         const currentResult = await supabase.from("analysis_orders").select(`${entryColumns}, sampler_staff_id`).order("created_at", { ascending: false });
@@ -229,12 +245,17 @@ export default function Home() {
     async function loadUserRole(activeSession: Session) {
         const { data } = await supabase.from("profiles").select("role").eq("id", activeSession.user.id).maybeSingle();
         const role = (data?.role === "revisor" ? "recepcion" : data?.role) as AppRole | undefined;
+        if (role !== "administrador") setPreviewRole(null);
         setUserRole(role || null);
         if (role === "analista") setView("samples");
     }
     async function loadStaffSamples() {
-        const { data, error } = await supabase.rpc("list_staff_samples");
-        if (!error && data) setStaffSamples(data as StaffSample[]);
+        const [{ data: openData, error: openError }, { data: completedData, error: completedError }] = await Promise.all([
+            supabase.rpc("list_staff_samples"),
+            supabase.rpc("list_completed_staff_samples"),
+        ]);
+        if (!openError && openData) setStaffSamples(openData as StaffSample[]);
+        if (!completedError && completedData) setCompletedStaffSamples(completedData as CompletedStaffSample[]);
     }
     useEffect(() => {
         if (reactSidebarEnabled) return;
@@ -263,7 +284,13 @@ export default function Home() {
         const buttons = [...nav.querySelectorAll("button")];
         buttons.filter((button) => button.id !== "samples-navigation" && !button.classList.contains("muted")).forEach((button) => { button.style.display = "none"; });
     }, [userRole, view]);
-    useEffect(() => { supabase.auth.getSession().then(({ data: { session: active } }) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, active) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); else setUserRole(null); }); return () => subscription.unsubscribe(); }, []);
+    useEffect(() => { supabase.auth.getSession().then(({ data: { session: active } }) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, active) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); else { setUserRole(null); setPreviewRole(null); } }); return () => subscription.unsubscribe(); }, []);
+    useEffect(() => {
+        if (!previewRole) return;
+        const appSections = [...document.querySelectorAll<HTMLElement>(".app-shell > .workspace, .app-shell .user-card")];
+        appSections.forEach((section) => section.setAttribute("inert", ""));
+        return () => appSections.forEach((section) => section.removeAttribute("inert"));
+    }, [previewRole]);
     useEffect(() => {
         if (!openOrderActionMenuId && !openClientActionMenuId) return;
         const closeMenus = () => { setOpenOrderActionMenuId(null); setOpenClientActionMenuId(null); };
@@ -442,7 +469,7 @@ export default function Home() {
             return button;
         };
         const items: HTMLButtonElement[] = [];
-        if (userRole !== "analista") {
+        if (activeRole !== "analista") {
             items.push(makeButton("▦   Entrada de muestras", !showCancelled && view === "entries" ? "nav-item active" : "nav-item", () => {
                 setView("entries"); setShowCancelled(false); setIntakeSubnavVisible((visible) => !visible);
             }));
@@ -454,28 +481,28 @@ export default function Home() {
             }));
         }
         items.push(makeButton("▤   Muestras", view === "samples" ? "nav-item active" : "nav-item", () => { setView("samples"); setShowCancelled(false); }));
-        if (userRole === "administrador" || userRole === "recepcion") {
+        if (activeRole === "administrador" || activeRole === "recepcion") {
             items.push(makeButton("⌁   Parámetros", view === "parameters" ? "nav-item active" : "nav-item", () => {
                 setView("parameters"); setParameterDirectoryMode("list"); setShowCancelled(false);
             }));
         }
-        if (userRole === "administrador") items.push(makeButton("♙   Personal", view === "personnel" ? "nav-item active" : "nav-item", () => {
+        if (activeRole === "administrador") items.push(makeButton("♙   Personal", view === "personnel" ? "nav-item active" : "nav-item", () => {
             setView("personnel"); setPersonnelDirectoryMode("list"); setShowCancelled(false);
         }));
-        if (userRole === "administrador") items.push(makeButton("⚙   Usuarios y permisos", view === "users" ? "nav-item active" : "nav-item", () => {
+        if (activeRole === "administrador") items.push(makeButton("⚙   Usuarios y permisos", view === "users" ? "nav-item active" : "nav-item", () => {
             setView("users"); setUserManagementMode("list"); setShowCancelled(false);
         }));
-        if (userRole !== "analista") items.push(makeButton("◫   Informes", view === "reports" ? "nav-item active" : "nav-item", () => {
+        if (activeRole !== "analista") items.push(makeButton("◫   Informes", view === "reports" ? "nav-item active" : "nav-item", () => {
             setView("reports"); setShowCancelled(false);
         }));
-        if (userRole === "administrador") items.push(makeButton("▥   Reportes", "nav-item muted"));
+        if (activeRole === "administrador") items.push(makeButton("▥   Reportes", "nav-item muted"));
         menu.append(...items);
         nav.append(menu);
         return () => {
             menu.remove();
             originalItems.forEach((item) => { item.style.display = ""; });
         };
-    }, [session, userRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode, userManagementMode]);
+    }, [session, activeRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode, userManagementMode]);
     useEffect(() => {
         if (view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports") return;
         const title = document.querySelector(".topbar h1");
@@ -508,6 +535,11 @@ export default function Home() {
         if (!normalizedQuery) return staffSamples;
         return staffSamples.filter((sample) => sample.sample_code.toLocaleLowerCase("es-MX").includes(normalizedQuery));
     }, [staffSamples, sampleQuery]);
+    const visibleCompletedStaffSamples = useMemo(() => {
+        const normalizedQuery = sampleQuery.trim().toLocaleLowerCase("es-MX");
+        if (!normalizedQuery) return completedStaffSamples;
+        return completedStaffSamples.filter((sample) => sample.sample_code.toLocaleLowerCase("es-MX").includes(normalizedQuery));
+    }, [completedStaffSamples, sampleQuery]);
     const issuedReports = useMemo(() => {
         const groups = new Map<string, Entry[]>();
         entries.filter((entry) => Boolean(entry.reportNumber) && Boolean(entry.issuedAt) && !entry.isCancelled).forEach((entry) => {
@@ -527,6 +559,27 @@ export default function Home() {
             };
         }).sort((a, b) => b.issuedAt.localeCompare(a.issuedAt) || b.reportNumber.localeCompare(a.reportNumber));
     }, [entries]);
+    const issuedOrderIds = useMemo(() => [...new Set(issuedReports.map((report) => report.orderId))], [issuedReports]);
+    useEffect(() => {
+        if (view !== "reports" || !["administrador", "recepcion"].includes(userRole || "") || issuedOrderIds.length === 0) return;
+        let active = true;
+        async function loadReportSampleIdentifications() {
+            const { data, error } = await supabase.from("report_drafts")
+                .select("order_id, sample_identification")
+                .in("order_id", issuedOrderIds);
+            if (!active || error || !data) return;
+            const identifications: Record<string, string[]> = {};
+            data.forEach((draft) => {
+                const value = draft.sample_identification?.trim();
+                if (!value) return;
+                const values = identifications[draft.order_id] || [];
+                if (!values.includes(value)) identifications[draft.order_id] = [...values, value];
+            });
+            setReportSampleIdentifications(identifications);
+        }
+        void loadReportSampleIdentifications();
+        return () => { active = false; };
+    }, [view, userRole, issuedOrderIds]);
     const reportYears = useMemo(() => [...new Set(issuedReports.map((report) => report.issuedAt.slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a)), [issuedReports]);
     const visibleReports = useMemo(() => {
         const normalizedQuery = reportQuery.trim().toLocaleLowerCase("es-MX");
@@ -573,6 +626,14 @@ export default function Home() {
     function openStaffSample(sample: StaffSample) {
         const fullEntry = userRole === "analista" ? undefined : entries.find((entry) => entry.sampleId === sample.sample_id);
         void openSample(fullEntry || { id: sample.order_id, op: dash, client: dash, samplingNumber: dash, sampler: dash, quotation: dash, received: formatDate(sample.received_at), due: formatDate(sample.due_date), reportNumber: "", analysis: sample.analysis_label || dash, sampleNumber: sample.sample_code, sampleId: sample.sample_id, analysisOrderCreatedAt: sample.analysis_order_created_at, sampledAt: null, issuedAt: null, isCancelled: false });
+    }
+    function startRolePreview(role: Exclude<AppRole, "administrador">) {
+        setSelected(null);
+        setReportPreviewOpen(false);
+        setExportConfirmOpen(false);
+        setPreviewRole(role);
+        setView(role === "analista" ? "samples" : "entries");
+        setShowCancelled(false);
     }
     async function generateAnalysisOrder() { if (!selected?.sampleId)
         return; setGeneratingOrder(true); const result = await supabase.rpc("create_worksheet_for_sample", { p_sample_id: selected.sampleId }); setGeneratingOrder(false); if (result.error) {
@@ -846,21 +907,27 @@ export default function Home() {
     </main>;
     if (!session)
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>Bienvenido de nuevo</h1><p className="auth-description">Ingresa con una cuenta autorizada por el administrador.</p><form onSubmit={authenticate} className="auth-form"><label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : "Ingresar"}</button></form></section></main>;
-    if (!userRole || (userRole === "analista" && view !== "samples") || (userRole === "recepcion" && (view === "personnel" || view === "users")))
+    if (!userRole || (!previewRole && userRole === "analista" && view !== "samples") || (!previewRole && userRole === "recepcion" && (view === "personnel" || view === "users")))
         return <main className="auth-page"><section className="auth-card"><p className="auth-description">Cargando tu panel autorizado…</p></section></main>;
     return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => supabase.auth.signOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "users" ? "Usuarios y permisos" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{view === "personnel" && personnelDirectoryMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}{view === "users" && userManagementMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setUserManagementMode("create")}>Invitar usuario</button>}</header>
     {view === "samples" && <section className="table-card">
-      <div className="table-toolbar"><div><h2>Muestras</h2><p>{visibleStaffSamples.length} muestras encontradas</p></div><input type="search" value={sampleQuery} onChange={(event) => setSampleQuery(event.target.value)} placeholder="Buscar número de muestra" aria-label="Buscar por número de muestra" /></div>
-      <div className="table-wrap"><table className="intake-table" style={{ width: "980px", minWidth: "980px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Análisis</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={5}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras disponibles."}</td></tr> : visibleStaffSamples.map((sample) => <tr key={sample.sample_id} className={sample.completion_percent >= 100 ? "sample-complete-row" : isPastDueDate(sample.due_date) ? "sample-overdue-row" : undefined}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{sample.analysis_label}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div>
+      {previewRole && <RolePreviewGuard role={previewRole} onExit={() => { setPreviewRole(null); setView("entries"); setShowCancelled(false); }} />}
+      <div className="sample-list-tabs" role="tablist" aria-label="Estado de las muestras">
+        <button type="button" role="tab" aria-selected={sampleListTab === "open"} className={sampleListTab === "open" ? "sample-list-tab sample-list-tab-open active" : "sample-list-tab sample-list-tab-open"} onClick={() => setSampleListTab("open")}>Muestras abiertas</button>
+        <button type="button" role="tab" aria-selected={sampleListTab === "completed"} className={sampleListTab === "completed" ? "sample-list-tab sample-list-tab-completed active" : "sample-list-tab sample-list-tab-completed"} onClick={() => setSampleListTab("completed")}>Muestras terminadas</button>
+      </div>
+      <div className="table-toolbar"><div><h2>Muestras</h2><p>{sampleListTab === "open" ? `${visibleStaffSamples.length} muestras encontradas` : `${visibleCompletedStaffSamples.length} muestras encontradas`}</p></div><input type="search" value={sampleQuery} onChange={(event) => setSampleQuery(event.target.value)} placeholder="Buscar número de muestra" aria-label="Buscar por número de muestra" /></div>
+      {sampleListTab === "open" ? <div className="table-wrap"><table className="intake-table" style={{ width: "980px", minWidth: "980px" }}><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Análisis</th><th>Fecha compromiso</th><th>Avance</th></tr></thead><tbody>{visibleStaffSamples.length === 0 ? <tr><td colSpan={5}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras abiertas."}</td></tr> : visibleStaffSamples.map((sample) => <tr key={sample.sample_id} className={sample.completion_percent >= 100 ? "sample-complete-row" : isPastDueDate(sample.due_date) ? "sample-overdue-row" : undefined}><td><button className="sample-link" onClick={() => openStaffSample(sample)}>{sample.sample_code}</button></td><td>{formatDate(sample.received_at)}</td><td>{sample.analysis_label}</td><td>{formatDate(sample.due_date)}</td><td><div className="progress-label"><span>{sample.captured_results} de {sample.total_results}</span><b>{sample.completion_percent}%</b></div><div className="progress" aria-label={`${sample.completion_percent}% completado`}><i style={{ width: `${sample.completion_percent}%` }} /></div></td></tr>)}</tbody></table></div> : <div className="table-wrap"><table className="completed-samples-table"><thead><tr><th>No. de muestra</th><th>Fecha de entrada</th><th>Fecha de emisión</th><th>Número de informe</th></tr></thead><tbody>{visibleCompletedStaffSamples.length === 0 ? <tr><td colSpan={4}>{sampleQuery.trim() ? "No se encontraron muestras con ese número." : "No hay muestras terminadas."}</td></tr> : visibleCompletedStaffSamples.map((sample) => <tr key={sample.sample_id}><td><strong>{sample.sample_code}</strong></td><td>{formatDate(sample.received_at)}</td><td>{formatDate(sample.issued_at)}</td><td><strong>{sample.report_number}</strong></td></tr>)}</tbody></table></div>}
     </section>}
     {view === "reports" && <section className="table-card report-directory">
       <div className="table-toolbar report-toolbar"><div><h2>Informes emitidos</h2><p>{visibleReports.length} de {issuedReports.length} informes mostrados</p></div><div className="report-filters"><select value={reportYear} onChange={(event) => setReportYear(event.target.value)} aria-label="Filtrar informes por año"><option value="all">Todos los años</option>{reportYears.map((year) => <option key={year} value={year}>{year}</option>)}</select><input type="search" value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar informe o cliente" aria-label="Buscar informe o cliente" /></div></div>
-      <div className="table-wrap"><table className="report-directory-table"><thead><tr><th>Número de informe</th><th>Cliente</th><th>Tipo de análisis</th><th>Fecha de emisión</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleReports.length === 0 ? <tr><td colSpan={6}>{reportQuery.trim() || reportYear !== "all" ? "No se encontraron informes con esos filtros." : "Aún no hay informes emitidos."}</td></tr> : visibleReports.map((report) => <tr key={report.orderId}><td><strong>{report.reportNumber}</strong></td><td><strong>{report.client}</strong>{report.clientBranch && <span>{report.clientBranch}</span>}</td><td>{report.analysis}</td><td>{formatDate(report.issuedAt)}</td><td><span className="status status-green">Emitido</span></td><td><button type="button" className="button secondary report-view-button" onClick={() => void openIssuedReport(report)}>Ver informe</button></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table className="report-directory-table"><thead><tr><th>Número de informe</th><th>Cliente</th><th>Tipo de análisis</th><th>Fecha de emisión</th><th>Estado</th><th>Descarga</th><th>Acciones</th></tr></thead><tbody>{visibleReports.length === 0 ? <tr><td colSpan={7}>{reportQuery.trim() || reportYear !== "all" ? "No se encontraron informes con esos filtros." : "Aún no hay informes emitidos."}</td></tr> : visibleReports.map((report) => <tr key={report.orderId}><td><strong>{report.reportNumber}</strong></td><td><strong>{report.client}</strong>{report.clientBranch && <span>{report.clientBranch}</span>}</td><td>{report.analysis}</td><td>{formatDate(report.issuedAt)}</td><td><span className="status status-green">Emitido</span></td><td className="report-download-id">{reportSampleIdentifications[report.orderId]?.join(", ") || dash}</td><td><button type="button" className="button secondary report-view-button" onClick={() => void openIssuedReport(report)}>Ver informe</button></td></tr>)}</tbody></table></div>
     </section>}
     {view === "parameters" && <ParameterDirectory canCreate={userRole === "administrador" || userRole === "recepcion"} mode={parameterDirectoryMode} onCancel={() => setParameterDirectoryMode("list")} />}
     {view === "personnel" && userRole === "administrador" && <PersonnelDirectory canManage mode={personnelDirectoryMode} userId={session.user.id} onCancel={() => setPersonnelDirectoryMode("list")} />}
-    {view === "users" && userRole === "administrador" && <UserManagement mode={userManagementMode} currentUserId={session.user.id} onCancel={() => setUserManagementMode("list")} />}
+    {view === "users" && userRole === "administrador" && <UserManagement mode={userManagementMode} currentUserId={session.user.id} onCancel={() => setUserManagementMode("list")} onStartPreview={startRolePreview} />}
     {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports" && <section className="table-card">
+      {previewRole && <RolePreviewGuard role={previewRole} onExit={() => { setPreviewRole(null); setView("entries"); setShowCancelled(false); }} />}
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
         <input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/>
