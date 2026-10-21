@@ -114,7 +114,7 @@ returns setof public.worksheet_results
 language plpgsql stable security definer set search_path = '' as $$
 declare role_name public.app_role := (select public.current_role());
 begin
-  if (role_name is null or (select auth.uid()) is null
+  if role_name is null or (select auth.uid()) is null
      or role_name not in ('administrador', 'recepcion', 'analista') then
     raise exception 'No tienes permiso para consultar esta hoja de análisis';
   end if;
