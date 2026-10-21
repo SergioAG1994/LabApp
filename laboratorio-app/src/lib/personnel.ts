@@ -10,4 +10,8 @@ export type StaffAuthorization = {
   authorized_at: string; updated_at: string;
 };
 export type PersonnelParameter = { id: string; name: string; method_reference: string | null; active: boolean };
+export type StaffTrainingRecord = {
+  id: string; staff_id: string; training_name: string; instructor: string;
+  training_kind: "internal" | "external"; received_at: string; updated_at: string;
+};
 export function employeeNumber(value: number) { return String(value).padStart(4, "0"); }
