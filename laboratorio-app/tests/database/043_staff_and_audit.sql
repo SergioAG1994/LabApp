@@ -72,14 +72,14 @@ update public.laboratory_staff set active=false where id='43000000-0000-0000-000
 update public.analysis_results set analyst_staff_id=null,analyst_name='Historic unknown' where worksheet_id=(select worksheet_id from state);
 update payload set rows=(select jsonb_agg(to_jsonb(r) order by r.parameter_id) from public.analysis_results r where worksheet_id=(select worksheet_id from state));
 update state set original_revision=(select revision from public.analysis_worksheets where id=state.worksheet_id);
-select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000002',true);
+select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 select public.save_analysis_worksheet((select sample_id from state),(select original_revision from state),(select jsonb_set(rows,'{0,result_value}','"3.25"') from payload));
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
 select pg_temp.assert_raises($q$update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000010' where worksheet_id=(select worksheet_id from state)$q$,'analista activo');
 select pg_temp.assert_raises($q$update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000012' where worksheet_id=(select worksheet_id from state)$q$,'analista activo');
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000003',true);
-select pg_temp.assert(exists(select 1 from public.audit_events where entity_type='analysis_results' and actor_id='43000000-0000-0000-0000-000000000002' and before_data->>'result_value'='2.25' and after_data->>'result_value'='3.25'),'audit actual actor separate from credited person');
+select pg_temp.assert(exists(select 1 from public.audit_events where entity_type='analysis_results' and actor_id='43000000-0000-0000-0000-000000000001' and before_data->>'result_value'='2.25' and after_data->>'result_value'='3.25'),'audit actual actor separate from credited person');
 select pg_temp.assert(exists(select 1 from public.audit_events where entity_type='laboratory_staff' and before_data->>'full_name'='Analyst One' and after_data->>'full_name'='Renamed analyst'),'personnel changes audited');
 select pg_temp.assert(exists(select 1 from public.audit_events where entity_type='analysis_orders' and action='insert'),'order creation audited');
 select public.issue_report((select order_id from public.samples where id=(select sample_id from state)),'0043');
