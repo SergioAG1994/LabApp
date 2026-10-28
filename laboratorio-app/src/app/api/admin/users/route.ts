@@ -29,10 +29,24 @@ async function authorizeAdministrator(request: Request) {
   const { url, publishableKey, secretKey } = serverConfiguration();
   const authClient = createClient(url, publishableKey, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
   });
   const { data: userData, error: userError } = await authClient.auth.getUser(token);
   if (userError || !userData.user) {
     return { error: Response.json({ error: "La sesión no es válida." }, { status: 401 }) };
+  }
+
+  // These endpoints use the secret key, so they must enforce the preview's
+  // read-only boundary explicitly instead of bypassing it via service_role.
+  const { data: preview, error: previewError } = await authClient.rpc("get_user_preview");
+  if (previewError && previewError.code !== "PGRST202") {
+    return { error: Response.json({ error: "No se pudo comprobar la vista activa." }, { status: 503 }) };
+  }
+  if (preview && (request.method !== "GET" || preview.role !== "administrador")) {
+    return { error: Response.json({ error: "La vista simulada es de solo lectura y respeta los permisos de la cuenta observada." }, { status: 403 }) };
+  }
+  if (request.headers.get("x-user-preview") && request.headers.get("x-user-preview") !== preview?.id) {
+    return { error: Response.json({ error: "La vista simulada cambió o terminó. Actualiza la aplicación." }, { status: 403 }) };
   }
 
   const adminClient = createClient(url, secretKey, {

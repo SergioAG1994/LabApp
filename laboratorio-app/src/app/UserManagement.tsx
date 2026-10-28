@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getUserPreviewId, supabase } from "@/lib/supabase";
 
 type AppRole = "administrador" | "recepcion" | "analista";
 type ManagedUser = {
@@ -25,9 +25,10 @@ const roleOptions: Array<{ value: AppRole; label: string; description: string }>
 async function adminRequest(path: string, init?: RequestInit) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error("Tu sesión terminó. Inicia sesión nuevamente.");
+  const previewId = getUserPreviewId();
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}`, ...init?.headers },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}`, ...(previewId ? { "x-user-preview": previewId } : {}), ...init?.headers },
   });
   const payload = await response.json() as { error?: string; message?: string; users?: ManagedUser[]; analystStaffOptions?: AnalystStaffOption[] };
   if (!response.ok) throw new Error(payload.error || "No se pudo completar la operación.");
@@ -39,7 +40,7 @@ function formatAccountDate(value: string | null) {
   return new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
 }
 
-export function UserManagement({ mode, currentUserId, onCancel, onStartPreview }: { mode: "list" | "create"; currentUserId: string; onCancel: () => void; onStartPreview: (role: Exclude<AppRole, "administrador">) => void }) {
+export function UserManagement({ mode, currentUserId, readOnly = false, onCancel, onStartPreview }: { mode: "list" | "create"; currentUserId: string; readOnly?: boolean; onCancel: () => void; onStartPreview: (userId: string) => Promise<void> }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -149,9 +150,9 @@ export function UserManagement({ mode, currentUserId, onCancel, onStartPreview }
     {message && <p className="auth-message" role="status">{message}</p>}
     {mode === "list" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Cuentas con acceso</h2><p>{users.length} usuarios registrados</p></div><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar usuario" aria-label="Buscar usuario" /></div>
-      <div className="role-preview-tools"><div><strong>Vista previa de permisos</strong><span>Revisa qué paneles muestra cada rol sin cambiar cuentas ni permisos reales.</span></div><div className="role-preview-actions"><button type="button" className="button secondary" onClick={() => onStartPreview("recepcion")}>Ver como Recepción</button><button type="button" className="button secondary" onClick={() => onStartPreview("analista")}>Ver como Analista</button></div></div>
-      <div className="table-wrap"><table className="users-table"><thead><tr><th>Usuario</th><th>Correo</th><th>Permisos</th><th>Personal vinculado</th><th>Estado</th><th>Último acceso</th></tr></thead><tbody>
-        {loading ? <tr><td colSpan={6}>Cargando cuentas…</td></tr> : visibleUsers.length === 0 ? <tr><td colSpan={6}>No se encontraron cuentas.</td></tr> : visibleUsers.map((user) => <tr key={user.id}><td><strong>{user.fullName || "Sin nombre"}</strong>{user.id === currentUserId && <span>Tu cuenta</span>}</td><td>{user.email}</td><td><select aria-label={`Permisos de ${user.fullName || user.email}`} value={user.role} disabled={changingId === user.id || user.id === currentUserId} onChange={(event) => void changeRole(user, event.target.value as AppRole)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td><td><select aria-label={`Personal vinculado a ${user.fullName || user.email}`} value={user.laboratoryStaffId || ""} disabled={changingId === user.id || user.id === currentUserId} onChange={(event) => void linkAnalyst(user, event.target.value)}><option value="">{user.role === "analista" ? "Desvincular (cambia a Recepción)" : "No vinculado"}</option>{analystStaffOptions.filter((staff) => !staff.linkedUserId || staff.linkedUserId === user.id).map((staff) => <option key={staff.id} value={staff.id}>{staff.full_name} ({staff.initials})</option>)}</select></td><td><span className={user.confirmedAt ? "status status-green" : "status status-amber"}>{user.confirmedAt ? "Activa" : "Invitación pendiente"}</span></td><td>{formatAccountDate(user.lastSignInAt)}</td></tr>)}
+      <p className="user-preview-help">La vista simulada muestra los permisos y parámetros de la cuenta seleccionada. Disponible solo en modo de lectura.</p>
+      <div className="table-wrap"><table className="users-table"><thead><tr><th>Usuario</th><th>Correo</th><th>Permisos</th><th>Personal vinculado</th><th>Estado</th><th>Último acceso</th><th>Vista</th></tr></thead><tbody>
+        {loading ? <tr><td colSpan={7}>Cargando cuentas…</td></tr> : visibleUsers.length === 0 ? <tr><td colSpan={7}>No se encontraron cuentas.</td></tr> : visibleUsers.map((user) => <tr key={user.id}><td><strong>{user.fullName || "Sin nombre"}</strong>{user.id === currentUserId && <span>Tu cuenta</span>}</td><td>{user.email}</td><td><select aria-label={`Permisos de ${user.fullName || user.email}`} value={user.role} disabled={readOnly || changingId === user.id || user.id === currentUserId} onChange={(event) => void changeRole(user, event.target.value as AppRole)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td><td><select aria-label={`Personal vinculado a ${user.fullName || user.email}`} value={user.laboratoryStaffId || ""} disabled={readOnly || changingId === user.id || user.id === currentUserId} onChange={(event) => void linkAnalyst(user, event.target.value)}><option value="">{user.role === "analista" ? "Desvincular (cambia a Recepción)" : "No vinculado"}</option>{analystStaffOptions.filter((staff) => !staff.linkedUserId || staff.linkedUserId === user.id).map((staff) => <option key={staff.id} value={staff.id}>{staff.full_name} ({staff.initials})</option>)}</select></td><td><span className={user.confirmedAt ? "status status-green" : "status status-amber"}>{user.confirmedAt ? "Activa" : "Invitación pendiente"}</span></td><td>{formatAccountDate(user.lastSignInAt)}</td><td>{user.id !== currentUserId && <button type="button" className="button secondary user-preview-button" aria-label={`Ver como ${user.fullName || user.email}`} disabled={readOnly || changingId !== null} onClick={() => { const name = user.fullName || user.email; const label = roleOptions.find((option) => option.value === user.role)?.label || user.role; if (window.confirm(`¿Ver el sistema como ${name} (${label})? Podrás consultar sus pantallas y datos en modo de solo lectura.`)) void onStartPreview(user.id); }}>Ver como {user.fullName || user.email}</button>}</td></tr>)}
       </tbody></table></div>
     </section>}
   </div>;

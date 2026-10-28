@@ -32,7 +32,8 @@ class Database:
         result = self.command("docker", "run", "-d", "--network", "none", "--name", self.name,
                               "--user", "postgres", "--entrypoint", "sh", IMAGE, "-c",
                               "initdb -D /tmp/labapp-test-pg -A trust >/tmp/init.log && "
-                              "exec postgres -D /tmp/labapp-test-pg -k /tmp -c listen_addresses=''")
+                              "exec postgres -D /tmp/labapp-test-pg -k /tmp -c listen_addresses='' "
+                              "-c timezone=America/Mexico_City")
         if result.returncode:
             self.cleanup()
             raise RuntimeError(result.stderr.strip())
@@ -59,8 +60,11 @@ class Database:
 BOOTSTRAP = """
 create role anon nologin;
 create role authenticated nologin;
+create role service_role nologin bypassrls;
+create role authenticator nologin;
 create schema auth;
-create table auth.users(id uuid primary key, raw_user_meta_data jsonb);
+create table auth.users(id uuid primary key, raw_user_meta_data jsonb, raw_app_meta_data jsonb, email text);
+create table auth.sessions(id uuid primary key, user_id uuid references auth.users(id), not_after timestamptz);
 create function auth.uid() returns uuid language sql stable as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
 $$;

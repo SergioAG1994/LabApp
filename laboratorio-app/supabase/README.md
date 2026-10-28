@@ -100,6 +100,34 @@ CI pass. Use a reviewed forward migration for rollback when appropriate.
 Application hosting is independent of this workflow. Use backward-compatible
 schema changes when the app and database may deploy in either order.
 
+## SER-35: per-account read-only preview
+
+`20261028053428_administrator_user_preview.sql` installs a PostgREST pre-request
+hook (`private.apply_user_preview`) and the start/status/end RPCs. The hook uses
+the real administrator's verified JWT and `auth.sessions` row; it changes only
+transaction-local claims so the existing RLS policies and read RPCs see the
+selected account. It never creates a target user's Auth session or token.
+
+The preview belongs to one Auth session (all tabs sharing it), expires after one
+hour, and records start/end/replacement/expiry in `audit_events`. The browser
+resynchronizes on focus and Auth changes, discards loaded state when switching
+accounts, and ends the preview before signing out. A new Auth session never
+inherits it. Status calls finalize expired or revoked previews; abrupt browser
+closure leaves the start record until the next status call, with `expires_at`
+defining its maximum validity.
+
+Only GET/HEAD table reads and explicitly listed read RPCs are permitted in a
+preview. A database trigger also blocks writes from other database entry points.
+The account-management endpoint checks preview state before using its server key.
+Future tables must use `private.reject_user_preview_write()` too; future read RPCs
+must be reviewed and added to the hook and the browser transport allowlists.
+
+The migration refuses to replace an existing `pgrst.db_pre_request` integration;
+compose its check with that integration before applying if necessary. Verify
+the migration workflow and the production hook configuration before enabling the
+feature. Rollback the hook configuration only after ending all active previews;
+disabling it while previews remain open would restore the actor's regular access.
+
 ## Legacy version map
 
 These versions encode import order, not the original execution times. The old
