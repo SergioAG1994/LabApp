@@ -32,7 +32,8 @@ class Database:
         result = self.command("docker", "run", "-d", "--network", "none", "--name", self.name,
                               "--user", "postgres", "--entrypoint", "sh", IMAGE, "-c",
                               "initdb -D /tmp/labapp-test-pg -A trust >/tmp/init.log && "
-                              "exec postgres -D /tmp/labapp-test-pg -k /tmp -c listen_addresses=''")
+                              "exec postgres -D /tmp/labapp-test-pg -k /tmp -c listen_addresses='' "
+                              "-c timezone=America/Mexico_City")
         if result.returncode:
             self.cleanup()
             raise RuntimeError(result.stderr.strip())
