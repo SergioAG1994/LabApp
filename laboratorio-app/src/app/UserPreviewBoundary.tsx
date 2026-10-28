@@ -127,7 +127,7 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
   return <>
     {preview && <div className="user-preview-banner" role="region" aria-label="Vista simulada activa">
       <div><strong>Estás viendo el sistema como {preview.fullName} ({previewRoleLabels[preview.role]})</strong><span>Solo lectura · Tu sesión sigue siendo la de administrador.</span></div>
-      <button type="button" className="button secondary" onClick={() => void exitPreview()}>Salir de vista simulada</button>
+      <button type="button" className="button secondary" aria-label="Salir de vista simulada" onClick={() => void exitPreview()}>Salir de vista simulada</button>
     </div>}
     {error && <div className="user-preview-error" role="alert">{error}<button type="button" className="button secondary" onClick={() => void refresh()}>Reintentar</button></div>}
     {ready ? <div key={preview ? `${preview.id}:${preview.role}` : `normal:${identity}`} className={preview ? "user-preview-content" : undefined}>
