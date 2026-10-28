@@ -123,9 +123,11 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
     preview: UserPreview | null;
     initialView: "entries" | "users" | "samples";
     onStartPreview: (userId: string) => Promise<void>;
-    onSignOut: () => Promise<void>;
+    onSignOut: (scope?: "global" | "local") => Promise<void>;
 }) {
     const [session, setSession] = useState<Session | null>(null);
+    const sessionUserId = session?.user.id;
+    const onSignOutRef = useRef(onSignOut);
     const [authReady, setAuthReady] = useState(false);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -290,7 +292,56 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         const buttons = [...nav.querySelectorAll("button")];
         buttons.filter((button) => button.id !== "samples-navigation" && !button.classList.contains("muted")).forEach((button) => { button.style.display = "none"; });
     }, [userRole, view]);
+    useEffect(() => { onSignOutRef.current = onSignOut; }, [onSignOut]);
     useEffect(() => { supabase.auth.getSession().then(({ data: { session: active } }) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, active) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); else { setUserRole(null); } }); return () => subscription.unsubscribe(); }, [loadUserRole]);
+    useEffect(() => {
+        if (!sessionUserId) return;
+        const inactivityLimitMs = 4 * 60 * 1000;
+        let timeoutId: number | undefined;
+        let signOutStarted = false;
+        let lastActivityAt = Date.now();
+        const checkInactivity = () => {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+            const remainingMs = inactivityLimitMs - (Date.now() - lastActivityAt);
+            if (remainingMs > 0) {
+                timeoutId = window.setTimeout(checkInactivity, remainingMs);
+                return;
+            }
+            if (signOutStarted) return;
+            signOutStarted = true;
+            void onSignOutRef.current("local").then(async () => {
+                const { data: { session: activeSession } } = await supabase.auth.getSession();
+                if (!activeSession) {
+                    window.location.reload();
+                    return;
+                }
+                signOutStarted = false;
+                lastActivityAt = Date.now();
+                checkInactivity();
+            }).catch(() => {
+                signOutStarted = false;
+                lastActivityAt = Date.now();
+                checkInactivity();
+            });
+        };
+        const recordActivity = () => {
+            if (signOutStarted || document.visibilityState !== "visible") return;
+            lastActivityAt = Date.now();
+            checkInactivity();
+        };
+        const checkWhenVisible = () => {
+            if (document.visibilityState === "visible") checkInactivity();
+        };
+        const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "pointermove", "keydown", "touchstart", "wheel", "scroll", "input"];
+        activityEvents.forEach((eventName) => window.addEventListener(eventName, recordActivity, { passive: true }));
+        document.addEventListener("visibilitychange", checkWhenVisible);
+        checkInactivity();
+        return () => {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+            activityEvents.forEach((eventName) => window.removeEventListener(eventName, recordActivity));
+            document.removeEventListener("visibilitychange", checkWhenVisible);
+        };
+    }, [sessionUserId]);
     useEffect(() => {
         if (!openOrderActionMenuId && !openClientActionMenuId) return;
         const closeMenus = () => { setOpenOrderActionMenuId(null); setOpenClientActionMenuId(null); };

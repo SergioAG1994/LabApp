@@ -8,7 +8,7 @@ type PreviewControls = {
   preview: UserPreview | null;
   initialView: "entries" | "users" | "samples";
   onStartPreview: (userId: string) => Promise<void>;
-  onSignOut: () => Promise<void>;
+  onSignOut: (scope?: "global" | "local") => Promise<void>;
 };
 
 export function UserPreviewBoundary({ component: Content }: { component: ComponentType<PreviewControls> }) {
@@ -118,9 +118,9 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
     return true;
   }
 
-  async function signOut() {
-    if (currentPreview.current && !(await exitPreview())) return;
-    const { error } = await supabase.auth.signOut();
+  async function signOut(scope: "global" | "local" = "global") {
+    if (currentPreview.current && !(await exitPreview()) && scope === "global") return;
+    const { error } = await supabase.auth.signOut({ scope });
     if (error) setError(error.message);
   }
 
