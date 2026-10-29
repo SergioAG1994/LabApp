@@ -295,7 +295,7 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
     useEffect(() => { onSignOutRef.current = onSignOut; }, [onSignOut]);
     useEffect(() => { supabase.auth.getSession().then(({ data: { session: active } }) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, active) => { setSession(active); setAuthReady(true); if (active) void loadUserRole(active); else { setUserRole(null); } }); return () => subscription.unsubscribe(); }, [loadUserRole]);
     useEffect(() => {
-        if (!sessionUserId) return;
+        if (!sessionUserId || preview || userRole !== "analista") return;
         const inactivityLimitMs = 4 * 60 * 1000;
         let timeoutId: number | undefined;
         let signOutStarted = false;
@@ -341,7 +341,7 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
             activityEvents.forEach((eventName) => window.removeEventListener(eventName, recordActivity));
             document.removeEventListener("visibilitychange", checkWhenVisible);
         };
-    }, [sessionUserId]);
+    }, [sessionUserId, preview, userRole]);
     useEffect(() => {
         if (!openOrderActionMenuId && !openClientActionMenuId) return;
         const closeMenus = () => { setOpenOrderActionMenuId(null); setOpenClientActionMenuId(null); };
@@ -649,7 +649,7 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
                 : loadWorksheetColumns((staff) => supabase.from("worksheet_results")
                     .select(`${columns}${staff ? ", analyst_staff_id, released_by_staff_id, worksheet_revision, worksheet_sampled_at" : ""}`)
                     .eq("sample_id", entry.sampleId).order("display_order")),
-            supabase.rpc("list_assignable_staff", { p_functions: userRole === "analista" ? ["analista", "revisor", "responsable_autorizacion"] : ["analista", "revisor", "responsable_autorizacion", "muestreador"] }),
+            supabase.rpc("list_assignable_staff", { p_functions: ["analista", "revisor", "responsable_autorizacion", "muestreador"] }),
         ]);
         const { result, legacyWorksheet: legacy } = worksheet;
         if (loadId !== sampleLoadId.current) return false;

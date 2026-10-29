@@ -7,10 +7,10 @@ export type LaboratoryStaff = {
 };
 
 export function eligibleStaff(person: LaboratoryStaff, assignment: "analista" | "revisor" | "muestreador") {
-  return person.active && (
-    person.functions.includes(assignment)
-    || (assignment === "revisor" && person.functions.some((fn) => ["responsable_autorizacion", "analista", "muestreador"].includes(fn)))
-  );
+  if (!person.active) return false;
+  if (assignment === "revisor") return true;
+  return person.functions.includes(assignment)
+    || (assignment === "analista" && person.functions.includes("muestreador"));
 }
 
 // Legacy text is evidence, not an identity. Never guess who it represents.

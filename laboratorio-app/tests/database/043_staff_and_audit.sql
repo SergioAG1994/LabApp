@@ -16,6 +16,9 @@ insert into public.parameters(id,name,method_reference) values
 insert into public.staff_parameter_authorizations(staff_id,parameter_id,authorization_kind,method_reference,authorized_at) values
  ('43000000-0000-0000-0000-000000000010','43000000-0000-0000-0000-000000000030','internal','ignored',current_date),
  ('43000000-0000-0000-0000-000000000010','43000000-0000-0000-0000-000000000031','internal','ignored',current_date);
+insert into public.staff_parameter_authorizations(staff_id,parameter_id,authorization_kind,method_reference,authorized_at)
+select '43000000-0000-0000-0000-000000000010',id,'internal','ignored',current_date
+from public.parameters where name='MF muestreo';
 set local role authenticated;
 select public.create_sample_entry_batch_auto_with_staff('43000000-0000-0000-0000-000000000020','[{"parameter_ids":["43000000-0000-0000-0000-000000000030","43000000-0000-0000-0000-000000000031"]}]',true,'SAMPLE-1','2087-01-01',p_sampler_staff_id=>'43000000-0000-0000-0000-000000000012');
 select pg_temp.assert((select sampler_name='Sampler One' and sampler_staff_id='43000000-0000-0000-0000-000000000012' from public.analysis_orders where op_number='28701001'),'sampler canonical name and ID');
@@ -76,8 +79,9 @@ select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001'
 set local role authenticated;
 select public.save_analysis_worksheet((select sample_id from state),(select original_revision from state),(select jsonb_set(rows,'{0,result_value}','"3.25"') from payload));
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000001',true);
-select pg_temp.assert_raises($q$update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000010' where worksheet_id=(select worksheet_id from state)$q$,'analista activo');
-select pg_temp.assert_raises($q$update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000012' where worksheet_id=(select worksheet_id from state)$q$,'analista activo');
+select pg_temp.assert_raises($q$update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000010' where worksheet_id=(select worksheet_id from state)$q$,'activo');
+update public.analysis_results set analyst_staff_id='43000000-0000-0000-0000-000000000012' where worksheet_id=(select worksheet_id from state);
+select pg_temp.assert((select bool_and(analyst_name='SO') from public.analysis_results where worksheet_id=(select worksheet_id from state)),'sampler can be attributed as analyst');
 select set_config('request.jwt.claim.sub','43000000-0000-0000-0000-000000000003',true);
 select pg_temp.assert(exists(select 1 from public.audit_events where entity_type='analysis_results' and actor_id='43000000-0000-0000-0000-000000000001' and before_data->>'result_value'='2.25' and after_data->>'result_value'='3.25'),'audit actual actor separate from credited person');
 select pg_temp.assert(exists(select 1 from public.audit_events where entity_type='laboratory_staff' and before_data->>'full_name'='Analyst One' and after_data->>'full_name'='Renamed analyst'),'personnel changes audited');
