@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+
+const parameterNameCollator = new Intl.Collator("es-MX", { sensitivity: "base", numeric: true });
 
 type ParameterRecord = {
   id: string;
@@ -13,6 +15,8 @@ type ParameterRecord = {
 
 export function ParameterDirectory({ canCreate, mode, onCancel }: { canCreate: boolean; mode: "list" | "create"; onCancel: () => void }) {
   const [parameters, setParameters] = useState<ParameterRecord[]>([]);
+  const sortedParameters = useMemo(() => [...parameters].sort((a, b) =>
+    parameterNameCollator.compare(a.name, b.name)), [parameters]);
   const [shortName, setShortName] = useState("");
   const [formalName, setFormalName] = useState("");
   const [unit, setUnit] = useState("");
@@ -149,8 +153,8 @@ export function ParameterDirectory({ canCreate, mode, onCancel }: { canCreate: b
     {mode === "list" && <section className="table-card">
       <div className="table-toolbar"><div><h2>Parámetros registrados</h2><p>{parameters.length} parámetros activos</p></div></div>
       <div className="table-wrap"><table className="parameter-table">
-        <thead><tr><th>Nombre corto</th><th>Nombre formal</th><th>Unidades</th><th>Método</th>{canCreate && <th>Acciones</th>}</tr></thead>
-        <tbody>{parameters.map((parameter) => <tr key={parameter.id}><td><strong>{parameter.name}</strong></td><td>{parameter.par_form || "—"}</td><td>{parameter.unit || "—"}</td><td>{parameter.method_reference || "—"}</td>{canCreate && <td><div className="parameter-actions" onClick={(event) => event.stopPropagation()}><button type="button" className="parameter-actions-trigger" aria-label={`Acciones para ${parameter.name}`} aria-haspopup="menu" aria-expanded={openActionMenuId === parameter.id} disabled={deactivatingId === parameter.id} onClick={() => setOpenActionMenuId((current) => current === parameter.id ? null : parameter.id)}>{deactivatingId === parameter.id ? "…" : "⋮"}</button>{openActionMenuId === parameter.id && <div className="parameter-actions-menu" role="menu"><button type="button" role="menuitem" onClick={() => { setOpenActionMenuId(null); startEditing(parameter); }}>Modificar</button><button type="button" role="menuitem" className="parameter-deactivate-action" onClick={() => void deactivateParameter(parameter)}>Desactivar</button></div>}</div></td>}</tr>)}</tbody>
+        <thead><tr><th aria-sort="ascending">Nombre corto</th><th>Nombre formal</th><th>Unidades</th><th>Método</th>{canCreate && <th>Acciones</th>}</tr></thead>
+        <tbody>{sortedParameters.map((parameter) => <tr key={parameter.id}><td><strong>{parameter.name}</strong></td><td>{parameter.par_form || "—"}</td><td>{parameter.unit || "—"}</td><td>{parameter.method_reference || "—"}</td>{canCreate && <td><div className="parameter-actions" onClick={(event) => event.stopPropagation()}><button type="button" className="parameter-actions-trigger" aria-label={`Acciones para ${parameter.name}`} aria-haspopup="menu" aria-expanded={openActionMenuId === parameter.id} disabled={deactivatingId === parameter.id} onClick={() => setOpenActionMenuId((current) => current === parameter.id ? null : parameter.id)}>{deactivatingId === parameter.id ? "…" : "⋮"}</button>{openActionMenuId === parameter.id && <div className="parameter-actions-menu" role="menu"><button type="button" role="menuitem" onClick={() => { setOpenActionMenuId(null); startEditing(parameter); }}>Modificar</button><button type="button" role="menuitem" className="parameter-deactivate-action" onClick={() => void deactivateParameter(parameter)}>Desactivar</button></div>}</div></td>}</tr>)}</tbody>
       </table></div>
     </section>}
     {mode === "list" && editing && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !editSaving) cancelEditing(); }}>

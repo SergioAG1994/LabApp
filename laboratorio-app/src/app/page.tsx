@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { MultiSampleOrderForm } from "./MultiSampleOrderForm";
+import { EntryTemplateTabs, type EntryTab } from "./EntryTemplateTabs";
 import { ParameterDirectory } from "./ParameterDirectory";
 import { PersonnelDirectory } from "./PersonnelDirectory";
 import { ReportPreview } from "./ReportPreview";
@@ -139,7 +140,8 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
     const readOnly = Boolean(preview);
     const [entries, setEntries] = useState<Entry[]>([]);
     const [query, setQuery] = useState("");
-    const [showCancelled, setShowCancelled] = useState(false);
+    const [entryTab, setEntryTab] = useState<EntryTab>("entries");
+    const showCancelled = entryTab === "cancelled";
     const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
     const [openOrderActionMenuId, setOpenOrderActionMenuId] = useState<string | null>(null);
     const [runningOrderActionId, setRunningOrderActionId] = useState<string | null>(null);
@@ -187,7 +189,6 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
     const [editClientRfc, setEditClientRfc] = useState("");
     const [editClientPhone, setEditClientPhone] = useState("");
     const [clientEditSaving, setClientEditSaving] = useState(false);
-    const [intakeSubnavVisible, setIntakeSubnavVisible] = useState(false);
     const [clientsSubnavVisible, setClientsSubnavVisible] = useState(false);
     const [parametersSubnavVisible] = useState(false);
     const [parameterDirectoryMode, setParameterDirectoryMode] = useState<"list" | "create">("list");
@@ -274,7 +275,7 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         button.id = "samples-navigation";
         button.className = "nav-item";
         button.textContent = "▤   Muestras";
-        button.onclick = () => { setView("samples"); setShowCancelled(false); };
+        button.onclick = () => { setView("samples"); setEntryTab("entries"); };
         const clientsButton = document.getElementById("clients-navigation") || [...nav.querySelectorAll("button")].find((item) => item.textContent?.includes("Clientes"));
         if (clientsButton?.nextSibling) nav.insertBefore(button, clientsButton.nextSibling);
         else {
@@ -303,26 +304,27 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         const checkInactivity = () => {
             if (timeoutId !== undefined) window.clearTimeout(timeoutId);
             const remainingMs = inactivityLimitMs - (Date.now() - lastActivityAt);
-            if (remainingMs > 0) {
-                timeoutId = window.setTimeout(checkInactivity, remainingMs);
+            if (remainingMs <= 0) {
+                if (!signOutStarted) {
+                    signOutStarted = true;
+                    void onSignOutRef.current("local").then(async () => {
+                        const { data: { session: activeSession } } = await supabase.auth.getSession();
+                        if (!activeSession) {
+                            window.location.reload();
+                            return;
+                        }
+                        signOutStarted = false;
+                        lastActivityAt = Date.now();
+                        checkInactivity();
+                    }).catch(() => {
+                        signOutStarted = false;
+                        lastActivityAt = Date.now();
+                        checkInactivity();
+                    });
+                }
                 return;
             }
-            if (signOutStarted) return;
-            signOutStarted = true;
-            void onSignOutRef.current("local").then(async () => {
-                const { data: { session: activeSession } } = await supabase.auth.getSession();
-                if (!activeSession) {
-                    window.location.reload();
-                    return;
-                }
-                signOutStarted = false;
-                lastActivityAt = Date.now();
-                checkInactivity();
-            }).catch(() => {
-                signOutStarted = false;
-                lastActivityAt = Date.now();
-                checkInactivity();
-            });
+            timeoutId = window.setTimeout(checkInactivity, remainingMs);
         };
         const recordActivity = () => {
             if (signOutStarted || document.visibilityState !== "visible") return;
@@ -370,24 +372,18 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         if (!nav) return;
         const buttons = [...nav.querySelectorAll("button")];
         const intakeButton = buttons.find((button) => button.textContent?.includes("Entrada de muestras"));
-        const cancelledButton = buttons.find((button) => button.textContent?.includes("OPs eliminados"));
         const clientsButton = buttons.find((button) => button.textContent?.includes("Clientes"));
         const directoryButton = document.getElementById("client-directory-navigation");
         if (intakeButton instanceof HTMLButtonElement) {
             if (intakeButton.textContent?.trim() === "Entrada de muestras") intakeButton.textContent = "▦   Entrada de muestras";
-            intakeButton.onclick = () => {
-                const nextVisible = !intakeSubnavVisible;
-                setView("entries"); setShowCancelled(false); setIntakeSubnavVisible(nextVisible);
-                if (cancelledButton instanceof HTMLElement) cancelledButton.style.display = nextVisible ? "" : "none";
-            };
+            intakeButton.onclick = () => { setView("entries"); setEntryTab("entries"); };
         }
-        if (cancelledButton instanceof HTMLElement) cancelledButton.style.display = intakeSubnavVisible && userRole !== "analista" ? "" : "none";
         if (clientsButton instanceof HTMLButtonElement) {
             if (clientsButton.textContent?.trim() === "Clientes") clientsButton.textContent = "▣   Clientes";
             clientsButton.onclick = () => { setView("clients"); setClientDirectoryVisible(true); setClientsSubnavVisible((visible) => !visible); };
         }
         if (directoryButton instanceof HTMLElement) directoryButton.style.display = clientsSubnavVisible ? "" : "none";
-    }, [session, userRole, view, intakeSubnavVisible, clientsSubnavVisible]);
+    }, [session, userRole, view, clientsSubnavVisible]);
     useEffect(() => {
         if (view !== "clients") return;
         const attentionLabel = [...document.querySelectorAll("label")].find((label) => label.textContent?.trim() === "Atención a");
@@ -472,24 +468,22 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         if (!nav) return;
         const buttons = [...nav.querySelectorAll("button")];
         const intake = buttons.find((button) => button.textContent?.includes("Entrada de muestras"));
-        const cancelled = buttons.find((button) => button.textContent?.includes("OPs eliminados"));
         const clients = buttons.find((button) => button.textContent?.includes("Clientes"));
         const directory = document.getElementById("client-directory-navigation");
         const samples = document.getElementById("samples-navigation");
         const muted = buttons.filter((button) => button.classList.contains("muted"));
         if (intake instanceof HTMLElement) intake.style.display = userRole === "analista" ? "none" : "";
         if (clients instanceof HTMLElement) clients.style.display = userRole === "analista" ? "none" : "";
-        if (cancelled instanceof HTMLElement) cancelled.style.display = userRole !== "analista" && intakeSubnavVisible ? "" : "none";
         if (directory instanceof HTMLElement) directory.style.display = clientsSubnavVisible ? "" : "none";
-        [intake, cancelled, clients, directory, samples, ...muted].forEach((item) => {
+        [intake, clients, directory, samples, ...muted].forEach((item) => {
             if (item instanceof HTMLElement) nav.append(item);
         });
-    }, [session, userRole, view, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible]);
+    }, [session, userRole, view, clientsSubnavVisible, clientDirectoryVisible]);
     useEffect(() => {
-        if (view !== "entries" || showCancelled) return;
+        if (view !== "entries" || entryTab !== "entries") return;
         const button = document.querySelector(".topbar > .button.primary") as HTMLButtonElement | null;
         if (button) button.textContent = "Nueva OP";
-    }, [view, showCancelled]);
+    }, [view, entryTab]);
     useEffect(() => {
         if (!session || view !== "samples") return;
         const timer = window.setTimeout(() => { void loadStaffSamples(); }, 0);
@@ -521,30 +515,27 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         };
         const items: HTMLButtonElement[] = [];
         if (activeRole !== "analista") {
-            items.push(makeButton("▦   Entrada de muestras", !showCancelled && view === "entries" ? "nav-item active" : "nav-item", () => {
-                setView("entries"); setShowCancelled(false); setIntakeSubnavVisible((visible) => !visible);
-            }));
-            if (intakeSubnavVisible) items.push(makeButton("↳   OPs eliminados", showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem", () => {
-                setView("entries"); setShowCancelled(true);
+            items.push(makeButton("▦   Entrada de muestras", view === "entries" || view === "new" ? "nav-item active" : "nav-item", () => {
+                setView("entries"); setEntryTab("entries");
             }));
             items.push(makeButton("▣   Clientes", view === "clients" ? "nav-item active" : "nav-item", () => {
                 setView("clients"); setClientDirectoryVisible(true);
             }));
         }
-        items.push(makeButton("▤   Muestras", view === "samples" ? "nav-item active" : "nav-item", () => { setView("samples"); setShowCancelled(false); }));
+        items.push(makeButton("▤   Muestras", view === "samples" ? "nav-item active" : "nav-item", () => { setView("samples"); setEntryTab("entries"); }));
         if (activeRole === "administrador" || activeRole === "recepcion") {
             items.push(makeButton("⌁   Parámetros", view === "parameters" ? "nav-item active" : "nav-item", () => {
-                setView("parameters"); setParameterDirectoryMode("list"); setShowCancelled(false);
+                setView("parameters"); setParameterDirectoryMode("list"); setEntryTab("entries");
             }));
         }
         if (activeRole === "administrador") items.push(makeButton("♙   Personal", view === "personnel" ? "nav-item active" : "nav-item", () => {
-            setView("personnel"); setPersonnelDirectoryMode("list"); setShowCancelled(false);
+            setView("personnel"); setPersonnelDirectoryMode("list"); setEntryTab("entries");
         }));
         if (activeRole === "administrador") items.push(makeButton("⚙   Usuarios y permisos", view === "users" ? "nav-item active" : "nav-item", () => {
-            setView("users"); setUserManagementMode("list"); setShowCancelled(false);
+            setView("users"); setUserManagementMode("list"); setEntryTab("entries");
         }));
         if (activeRole !== "analista") items.push(makeButton("◫   Informes", view === "reports" ? "nav-item active" : "nav-item", () => {
-            setView("reports"); setShowCancelled(false);
+            setView("reports"); setEntryTab("entries");
         }));
         if (activeRole === "administrador") items.push(makeButton("▥   Reportes", "nav-item muted"));
         menu.append(...items);
@@ -553,7 +544,7 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
             menu.remove();
             originalItems.forEach((item) => { item.style.display = ""; });
         };
-    }, [session, activeRole, view, showCancelled, intakeSubnavVisible, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode, userManagementMode]);
+    }, [session, activeRole, view, clientsSubnavVisible, clientDirectoryVisible, parametersSubnavVisible, parameterDirectoryMode, personnelSubnavVisible, personnelDirectoryMode, userManagementMode]);
     useEffect(() => {
         if (view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports") return;
         const title = document.querySelector(".topbar h1");
@@ -952,7 +943,7 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
         return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><p className="eyebrow">ACCESO INTERNO</p><h1>Bienvenido de nuevo</h1><p className="auth-description">Ingresa con una cuenta autorizada por el administrador.</p><form onSubmit={authenticate} className="auth-form"><label>Correo electrónico<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)}/></label><label>Contraseña<input required type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)}/></label>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="button primary full" disabled={authLoading}>{authLoading ? "Procesando…" : "Ingresar"}</button></form></section></main>;
     if (!userRole || (userRole === "analista" && view !== "samples") || (userRole === "recepcion" && (view === "personnel" || view === "users")))
         return <main className="auth-page"><section className="auth-card"><p className="auth-description">Cargando tu panel autorizado…</p></section></main>;
-    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={!showCancelled && view === "entries" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setShowCancelled(false); }}>▦ &nbsp; Entrada de muestras</button><button className={showCancelled ? "nav-item nav-subitem active" : "nav-item nav-subitem"} onClick={() => { setView("entries"); setShowCancelled(true); }}>↳ &nbsp; OPs eliminados</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => void onSignOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{preview?.fullName || session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "users" ? "Usuarios y permisos" : view === "reports" ? "Informes" : showCancelled ? "OPs eliminados" : "Entrada de muestras"}</h1></div>{!readOnly && view === "entries" && !showCancelled && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{!readOnly && view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{!readOnly && view === "personnel" && personnelDirectoryMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}{!readOnly && view === "users" && userManagementMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setUserManagementMode("create")}>Invitar usuario</button>}</header>
+    return <main className="app-shell"><aside className="sidebar"><div className="brand"><span>LA</span><div><strong>LabAqua</strong><small>Control de análisis</small></div></div><nav><button className={view === "entries" || view === "new" ? "nav-item active" : "nav-item"} onClick={() => { setView("entries"); setEntryTab("entries"); }}>▦ &nbsp; Entrada de muestras</button><button className="nav-item muted">◫ &nbsp; Informes</button><button className="nav-item muted">▥ &nbsp; Reportes</button></nav><button className="user-card" onClick={() => void onSignOut()}><div className="avatar">{(session.user.email?.slice(0, 2) || "US").toUpperCase()}</div><div><strong>{preview?.fullName || session.user.user_metadata.full_name || "Usuario"}</strong><small>Cerrar sesión</small></div></button></aside><section className="workspace"><header className="topbar"><div><p className="eyebrow">LABORATORIO</p><h1>{view === "new" ? "Alta de OP y muestra" : view === "parameters" ? "Parámetros" : view === "personnel" ? "Personal" : view === "users" ? "Usuarios y permisos" : view === "reports" ? "Informes" : "Entrada de muestras"}</h1></div>{!readOnly && view === "entries" && entryTab === "entries" && <button className="button primary" onClick={() => setView("new")}>＋ Alta de OP</button>}{!readOnly && view === "parameters" && parameterDirectoryMode === "list" && (userRole === "administrador" || userRole === "recepcion") && <button className="button primary" onClick={() => setParameterDirectoryMode("create")}>Alta de parámetro</button>}{!readOnly && view === "personnel" && personnelDirectoryMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setPersonnelDirectoryMode("create")}>Alta de personal</button>}{!readOnly && view === "users" && userManagementMode === "list" && userRole === "administrador" && <button className="button primary" onClick={() => setUserManagementMode("create")}>Invitar usuario</button>}</header>
     {view === "samples" && <section className="table-card">
       <div className="sample-list-tabs" role="tablist" aria-label="Estado de las muestras">
         <button type="button" role="tab" aria-selected={sampleListTab === "open"} className={sampleListTab === "open" ? "sample-list-tab sample-list-tab-open active" : "sample-list-tab sample-list-tab-open"} onClick={() => setSampleListTab("open")}>Muestras abiertas</button>
@@ -968,14 +959,14 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
     {view === "parameters" && <ParameterDirectory canCreate={!readOnly && (userRole === "administrador" || userRole === "recepcion")} mode={parameterDirectoryMode} onCancel={() => setParameterDirectoryMode("list")} />}
     {view === "personnel" && userRole === "administrador" && <PersonnelDirectory canManage={!readOnly} mode={personnelDirectoryMode} userId={session.user.id} onCancel={() => setPersonnelDirectoryMode("list")} />}
     {view === "users" && userRole === "administrador" && <UserManagement mode={userManagementMode} currentUserId={preview?.userId || session.user.id} readOnly={readOnly} onCancel={() => setUserManagementMode("list")} onStartPreview={onStartPreview} />}
-    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports" && <section className="table-card">
+    {view === "new" ? <MultiSampleOrderForm onCancel={() => setView("entries")} onCreated={async () => { setView("entries"); await loadEntries(); }} /> : view !== "samples" && view !== "parameters" && view !== "personnel" && view !== "users" && view !== "reports" && <EntryTemplateTabs enabled={userRole === "administrador" || userRole === "recepcion"} readOnly={readOnly} tab={entryTab} onTabChange={(tab) => { setEntryTab(tab); setQuery(""); setOpenOrderActionMenuId(null); }}><section className="table-card">
       <div className="table-toolbar">
         <div><h2>{showCancelled ? "OPs eliminados" : "Registro de entrada de muestras"}</h2><p>{visibleOrderGroups.length} OPs encontradas</p></div>
         <input aria-label="Buscar entradas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OP, cliente o muestra…"/>
       </div>
       <div className="table-wrap"><table className="intake-table entries-table">
         <thead><tr><th>OP</th><th>Cliente</th><th>Análisis</th><th>No. muestra</th><th>Fecha entrada</th><th>No. muestreo</th><th>Muestreador</th><th>Cotización</th><th>Fecha salida</th><th>Informe</th><th>Acciones</th></tr></thead>
-        <tbody>{visibleOrderGroups.map((group) => {
+        <tbody>{visibleOrderGroups.length === 0 && <tr><td colSpan={11}>{query.trim() ? "No se encontraron OPs con esa búsqueda." : showCancelled ? "No hay OPs eliminados." : "No hay entradas registradas."}</td></tr>}{visibleOrderGroups.map((group) => {
           const entry = group.representative;
           const hasMultipleSamples = group.samples.length > 1;
           const expanded = hasMultipleSamples && expandedOrderIds.has(group.id);
@@ -1003,6 +994,6 @@ function Workspace({ preview, initialView, onStartPreview, onSignOut }: {
           </Fragment>;
         })}</tbody>
       </table></div>
-    </section>}
+    </section></EntryTemplateTabs>}
   </section>{selected && <div className="modal-backdrop" onClick={() => { if (!savingOrder && !exportingReport) { sampleLoadId.current += 1; setSelected(null); } }}><section className="modal detail-modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => { if (!savingOrder && !exportingReport) { sampleLoadId.current += 1; setSelected(null); } }}>×</button><p className="eyebrow">ORDEN DE ANÁLISIS</p>{selected.analysisOrderCreatedAt ? <><div className="detail-grid order-header"><div><span>Número de muestra</span><strong>{selected.sampleNumber}</strong></div><div><span>OP</span><strong>{selected.op}</strong></div><div><span>Paquete de análisis</span><strong>{selected.analysis}</strong></div>{selected.analysisOrderCreatedAt && userRole !== "analista" && <button className="button primary oa-export-button" disabled={readOnly || worksheetLocked || savingOrder || exportingReport || worksheetLoading} onClick={requestReportExport}>{worksheetLocked ? "Exportada a informe" : "Exportar a Informe"}</button>}<label><span>Fecha de muestreo</span><input type="date" value={sampledInput} disabled={readOnly || worksheetLocked || worksheetLoading || savingOrder || exportingReport || !laboratorySampled} onChange={(event) => setSampledInput(event.target.value)}/></label><div><span>Fecha de recepción</span><strong>{selected.received}</strong></div><div><span>Fecha compromiso</span><strong>{selected.due}</strong></div></div>{orderRows.length > 0 ? <><div className="order-template" ref={orderTableRef} onScroll={(event) => syncHorizontalScroll("table", event.currentTarget.scrollLeft)}><div className="order-template-head"><span>Incertidumbre</span><span>Prueba</span><span>Resultados</span><span>Unidades</span><span>Referencia analista</span><span>Fecha</span><span>Analista</span><span>Libera</span></div>{orderRows.map((row) => <div className={row.row_type === "aggregate" ? "order-result-row aggregate-row" : "order-result-row"} key={row.id}>{uncertaintyIsNotApplicable(row.label) ? <input value="No aplica" disabled aria-label={`Incertidumbre no aplicable para ${row.label}`} /> : <input type="number" min="0" step="0.00001" value={row.uncertainty || ""} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { uncertainty: event.target.value })} placeholder="0.00000"/>}<div><strong>{row.label}</strong></div><input type="text" aria-label={`Resultado: ${row.label}`} value={row.result_value || ""} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { result_value: event.target.value })} placeholder="Resultado"/><span>{row.unit || dash}</span><input inputMode="numeric" maxLength={5} value={row.analyst_reference || ""} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { analyst_reference: event.target.value.replace(/\D/g, "") })} placeholder="00000"/><input type="date" value={row.result_date || ""} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { result_date: event.target.value })}/>{legacyWorksheet ? <><input maxLength={3} value={row.analyst_name || ""} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { analyst_name: event.target.value.toUpperCase() })} placeholder="ABC"/><input maxLength={3} value={row.released_by || ""} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(event) => updateRow(row.id, { released_by: event.target.value.toUpperCase() })} placeholder="ABC"/></> : <><StaffAssignment staff={laboratoryStaff} assignment="analista" staffId={row.analyst_staff_id} legacy={row.analyst_name} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(id, initials) => updateRow(row.id, { analyst_staff_id: id, analyst_name: initials })}/><StaffAssignment staff={laboratoryStaff} assignment="revisor" staffId={row.released_by_staff_id} legacy={row.released_by} disabled={readOnly || worksheetLocked || savingOrder || exportingReport} onChange={(id, initials) => updateRow(row.id, { released_by_staff_id: id, released_by: initials })}/></>}</div>)}</div><div className="order-bottom-scroll" ref={orderBottomScrollRef} onScroll={(event) => syncHorizontalScroll("bottom", event.currentTarget.scrollLeft)}><div /></div></> : <p className="modal-note">{worksheetLoading ? "Cargando orden de análisis…" : "Esta orden no tiene aún una plantilla de parámetros."}</p>}<button className="button primary full" disabled={readOnly || savingOrder || exportingReport || worksheetLoading || !orderRows.length || worksheetLocked} onClick={() => void saveAnalysisOrder()}>{readOnly ? "Vista simulada: solo lectura" : worksheetLocked ? "Orden exportada a informe" : savingOrder ? "Guardando…" : "Guardar orden de análisis"}</button></> : <><h2>{selected.sampleNumber}</h2><p className="modal-note">Aún no se ha generado la orden de análisis para esta muestra.</p><button className="button primary full" disabled={readOnly || generatingOrder} onClick={() => void generateAnalysisOrder()}>{generatingOrder ? "Generando…" : "Generar orden de análisis"}</button></>}</section></div>}{selected && reportPreviewOpen && <ReportPreview entry={{ ...selected, sampler: staffDisplayName(laboratoryStaff, selected.samplerStaffId, selected.sampler) }} rows={orderRows} sampledAt={sampledInput} onSampledAtChange={setSampledInput} onClose={() => { setReportPreviewOpen(false); if (reportListPreview) setSelected(null); setReportListPreview(false); }} onContinue={() => setExportConfirmOpen(true)} userId={session.user.id} readOnly={readOnly || selected.status === "informe_emitido"}/>} {exportConfirmOpen && <div className="modal-backdrop export-confirm-backdrop" onClick={() => !exportingReport && setExportConfirmOpen(false)}><section className="modal export-confirm-modal" onClick={(event) => event.stopPropagation()}><p className="eyebrow">EXPORTAR A INFORME</p><h2>Confirmar exportación</h2><p className="export-warning">La orden de análisis se exportará a un formato de informe. Ya no podrán modificarse los valores a menos que se comience un proceso de corrección de informe.</p><p className="export-question">¿Está seguro de que quiere exportar a informe?</p><div className="export-confirm-actions"><button className="button secondary" disabled={exportingReport} onClick={() => setExportConfirmOpen(false)}>Cancelar</button><button className="button primary" disabled={exportingReport} onClick={() => void issueReportFromWorksheet()}>{exportingReport ? "Exportando…" : "Sí, exportar a informe"}</button></div></section></div>}{emissionEntry && <div className="modal-backdrop" onClick={() => setEmissionEntry(null)}><section className="modal" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setEmissionEntry(null)}>×</button><p className="eyebrow">EMISIÓN DE INFORME</p><h2>{emissionEntry.op}</h2><p className="client-name">{emissionEntry.client} · Muestra {emissionEntry.sampleNumber}</p><form className="auth-form" onSubmit={saveEmission}><label>Número de informe<input value={reportInput} onChange={(event) => setReportInput(event.target.value)} placeholder="Ej. 0001" maxLength={4}/></label><label>Fecha de salida<input type="date" value={issuedInput} onChange={(event) => setIssuedInput(event.target.value)}/></label><button className="button primary full" disabled={savingEmission}>{savingEmission ? "Guardando…" : "Guardar emisión"}</button></form></section></div>}</main>;
 }

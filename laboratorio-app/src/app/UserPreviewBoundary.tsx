@@ -16,13 +16,18 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [returnToUsers, setReturnToUsers] = useState(false);
-  const [identity, setIdentity] = useState("signed-out");
+  const [identity, setIdentity] = useState<string | null>(null);
+  const verifiedIdentity = useRef<string | null>(null);
   const revision = useRef(0);
   const mutating = useRef(false);
   const currentPreview = useRef<UserPreview | null>(null);
   const channel = useRef<BroadcastChannel | null>(null);
 
   const applyPreview = useCallback((next: UserPreview | null) => {
+    const previous = currentPreview.current;
+    if (previous === next || (previous && next &&
+      previous.id === next.id && previous.userId === next.userId && previous.role === next.role &&
+      previous.fullName === next.fullName && previous.expiresAt === next.expiresAt)) return;
     currentPreview.current = next;
     setUserPreviewId(next?.id || null);
     setPreview(next);
@@ -32,7 +37,16 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
     if (mutating.current) return;
     const version = ++revision.current;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (version !== revision.current) return;
+      if (sessionError) throw sessionError;
+      const nextIdentity = session?.user.id || "signed-out";
+      if (verifiedIdentity.current !== null && verifiedIdentity.current !== nextIdentity) {
+        verifiedIdentity.current = null;
+        setIdentity(null);
+        setReady(false);
+        setReturnToUsers(false);
+      }
       let next: UserPreview | null = null;
       if (session) {
         const { data, error } = await supabase.rpc("get_user_preview");
@@ -41,7 +55,8 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
         next = data as UserPreview | null;
       }
       if (version !== revision.current) return;
-      setIdentity(session?.user.id || "signed-out");
+      verifiedIdentity.current = nextIdentity;
+      setIdentity(nextIdentity);
       applyPreview(next);
       setError("");
       setReady(true);
@@ -54,12 +69,27 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void refresh(); }, 0);
+    let authTimer: number | undefined;
     // Defer calls outside the Auth callback to avoid taking its session lock.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      window.setTimeout(() => { void refresh(); }, 0);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (verifiedIdentity.current !== null && verifiedIdentity.current !== (session?.user.id || "signed-out")) {
+        revision.current += 1;
+        verifiedIdentity.current = null;
+        setIdentity(null);
+        setReady(false);
+        setReturnToUsers(false);
+      }
+      window.clearTimeout(authTimer);
+      authTimer = window.setTimeout(() => { void refresh(); }, 0);
     });
     const sync = () => { setReady(false); void refresh(); };
-    const onVisibility = () => { if (document.visibilityState === "visible") sync(); };
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      // Ordinary focus changes do not invalidate the already verified screen.
+      const activePreview = currentPreview.current;
+      if (activePreview && Date.parse(activePreview.expiresAt) <= Date.now()) sync();
+      else void refresh();
+    };
     const broadcast = new BroadcastChannel("labapp-user-preview");
     channel.current = broadcast;
     broadcast.onmessage = sync;
@@ -67,6 +97,7 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
     return () => {
       revision.current += 1;
       window.clearTimeout(timer);
+      window.clearTimeout(authTimer);
       subscription.unsubscribe();
       broadcast.close();
       channel.current = null;
@@ -125,13 +156,15 @@ export function UserPreviewBoundary({ component: Content }: { component: Compone
   }
 
   return <>
-    {preview && <div className="user-preview-banner" role="region" aria-label="Vista simulada activa">
+    {ready && preview && <div className="user-preview-banner" role="region" aria-label="Vista simulada activa">
       <div><strong>Estás viendo el sistema como {preview.fullName} ({previewRoleLabels[preview.role]})</strong><span>Solo lectura · Tu sesión sigue siendo la de administrador.</span></div>
       <button type="button" className="button secondary" aria-label="Salir de vista simulada" onClick={() => void exitPreview()}>Salir de vista simulada</button>
     </div>}
     {error && <div className="user-preview-error" role="alert">{error}<button type="button" className="button secondary" onClick={() => void refresh()}>Reintentar</button></div>}
-    {ready ? <div key={preview ? `${preview.id}:${preview.role}` : `normal:${identity}`} className={preview ? "user-preview-content" : undefined}>
+    {identity !== null && <div key={`${identity}:${preview ? `${preview.id}:${preview.role}` : "normal"}`}
+      className={preview ? "user-preview-content" : undefined} hidden={!ready} inert={!ready}>
       <Content preview={preview} initialView={preview?.role === "analista" ? "samples" : preview ? "entries" : returnToUsers ? "users" : "entries"} onStartPreview={startPreview} onSignOut={signOut} />
-    </div> : <main className="auth-page"><p>{error ? "No se puede abrir el sistema hasta comprobar la sesión." : "Comprobando la vista autorizada…"}</p></main>}
+    </div>}
+    {!ready && <main className="auth-page"><p>{error ? "No se puede abrir el sistema hasta comprobar la sesión." : "Comprobando la vista autorizada…"}</p></main>}
   </>;
 }
