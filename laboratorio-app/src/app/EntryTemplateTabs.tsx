@@ -67,11 +67,10 @@ export function EntryTemplateTabs({ enabled, readOnly, tab, onTabChange, childre
 function TemplateDirectory({ readOnly }: { readOnly: boolean }) {
   const [templates, setTemplates] = useState<Template[] | null>(null);
   const [kind, setKind] = useState<Kind>("standard");
-  const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
   const [selectedId, setSelectedId] = useState("");
   const [loadingError, setLoadingError] = useState("");
   const [reload, setReload] = useState(0);
-  const [saving, setSaving] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"status" | "delete" | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
 
   useEffect(() => {
@@ -97,15 +96,14 @@ function TemplateDirectory({ readOnly }: { readOnly: boolean }) {
     return () => { cancelled = true; };
   }, [reload]);
 
-  const visible = (templates || []).filter((template) => template.kind === kind
-    && (filter === "all" || template.active === (filter === "active")));
+  const visible = (templates || []).filter((template) => template.kind === kind);
   const selected = visible.find((template) => template.id === selectedId);
 
   async function changeStatus(template: Template) {
-    if (readOnly || saving || template.kind === "standard") return;
+    if (readOnly || pendingAction || template.kind === "standard") return;
     const active = !template.active;
     if (!active && !window.confirm(`¿Desactivar «${template.name}»? No aparecerá en altas nuevas. Las órdenes existentes no cambiarán.`)) return;
-    setSaving(true);
+    setPendingAction("status");
     setFeedback(null);
     try {
       const { error } = await supabase.rpc("set_analysis_template_active", {
@@ -119,7 +117,29 @@ function TemplateDirectory({ readOnly }: { readOnly: boolean }) {
       const detail = error && typeof error === "object" && "message" in error ? String(error.message) : "";
       setFeedback({ text: `No se pudo cambiar el estado de la plantilla.${detail ? ` ${detail}` : ""}`, error: true });
     } finally {
-      setSaving(false);
+      setPendingAction(null);
+    }
+  }
+
+  async function deleteTemplate(template: Template) {
+    if (readOnly || pendingAction || template.kind === "standard") return;
+    if (!window.confirm(`La plantilla «${template.name}» se eliminará por completo. Esta acción no se puede deshacer.\n\n¿Seguro que quieres eliminarla?`)) return;
+
+    setPendingAction("delete");
+    setFeedback(null);
+    try {
+      const { error } = await supabase.rpc("delete_analysis_template", {
+        p_kind: template.kind, p_template_id: template.id,
+      });
+      if (error) throw error;
+      setTemplates((current) => current?.filter((item) => item.id !== template.id || item.kind !== template.kind) ?? null);
+      setSelectedId((current) => current === template.id ? "" : current);
+      setFeedback({ text: `Se eliminó la plantilla «${template.name}».`, error: false });
+    } catch (error) {
+      const detail = error && typeof error === "object" && "message" in error ? String(error.message) : "";
+      setFeedback({ text: `No se pudo eliminar la plantilla.${detail ? ` ${detail}` : ""}`, error: true });
+    } finally {
+      setPendingAction(null);
     }
   }
 
@@ -135,11 +155,6 @@ function TemplateDirectory({ readOnly }: { readOnly: boolean }) {
           {label}
         </button>)}
       </div>
-      <label className={styles.filter}>Estado
-        <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)}>
-          <option value="all">Todas</option><option value="active">Activas</option><option value="inactive">Inactivas</option>
-        </select>
-      </label>
     </div>
     {feedback && <p className={feedback.error ? "auth-message" : styles.feedback} role={feedback.error ? "alert" : "status"}>{feedback.text}</p>}
     {loadingError ? <div role="alert"><p>No se pudieron cargar las plantillas: {loadingError}</p>
@@ -154,15 +169,21 @@ function TemplateDirectory({ readOnly }: { readOnly: boolean }) {
           </span>
           <span className={template.active ? styles.active : styles.inactive}>{template.active ? "Activa" : "Inactiva"}</span>
         </button></li>)}
-        {!visible.length && <li className={styles.empty}>No hay plantillas con este filtro.</li>}
+        {!visible.length && <li className={styles.empty}>No hay plantillas de este tipo.</li>}
       </ul>
       <section className={styles.detail} aria-label="Detalle de plantilla">
         {selected ? <>
           <div className={styles.detailHeader}><h3>{selected.name}</h3>
-            {!readOnly && selected.kind !== "standard" && <button className={`button ${selected.active ? "secondary" : "primary"}`} type="button"
-              disabled={saving} onClick={() => void changeStatus(selected)}>
-              {saving ? "Guardando…" : selected.active ? "Desactivar" : "Activar"}
-            </button>}
+            {!readOnly && selected.kind !== "standard" && <div className={styles.actions}>
+              <button className={`button ${selected.active ? "secondary" : "primary"}`} type="button"
+                disabled={pendingAction !== null} onClick={() => void changeStatus(selected)}>
+                {pendingAction === "status" ? "Guardando…" : selected.active ? "Desactivar" : "Activar"}
+              </button>
+              <button className={`button secondary ${styles.deleteButton}`} type="button"
+                disabled={pendingAction !== null} onClick={() => void deleteTemplate(selected)}>
+                {pendingAction === "delete" ? "Eliminando…" : "Eliminar"}
+              </button>
+            </div>}
           </div>
           {selected.kind === "standard" && <p className={styles.empty}>Paquete predeterminado · solo consulta</p>}
           <TemplateParameters key={`${selected.kind}:${selected.id}`} template={selected} />
